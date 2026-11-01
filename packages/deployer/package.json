@@ -1,0 +1,16 @@
+{
+  "name": "@factory/deployer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/server.ts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "bun-types": "^1.3.0",
+    "typescript": "^5.9.0"
+  }
+}
