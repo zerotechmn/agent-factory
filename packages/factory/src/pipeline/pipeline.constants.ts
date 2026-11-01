@@ -6,7 +6,7 @@ const SONNET = "claude-sonnet-5-5";
 
 // Sonnet handles the document and judgement stages; Opus is kept for the
 // stages whose output is code or architecture, where quality pays for itself.
-// A straight pass is allocated ~$9.6, leaving ~$4.4 under the $15 cap (after
+// A straight pass is allocated ~$9.9, leaving ~$4.1 under the $15 cap (after
 // the $1 reserve) for repair and fix rounds.
 export const STAGE_SETTINGS: Record<AgentStageKey, StageSettings> = {
   deployment: {
@@ -40,7 +40,8 @@ export const STAGE_SETTINGS: Record<AgentStageKey, StageSettings> = {
     timeoutMs: 45 * MINUTE,
   },
   requirements: {
-    budgetUsd: 0.3,
+    // The PRD template is far richer than a story list, so more output tokens.
+    budgetUsd: 0.6,
     effort: "medium",
     label: "Requirements",
     maxTurns: 10,
@@ -90,6 +91,9 @@ export const STAGE_SETTINGS: Record<AgentStageKey, StageSettings> = {
     timeoutMs: 20 * MINUTE,
   },
 };
+
+/** One resumed requirements session to fix PRD cross-reference problems. */
+export const PRD_REPAIR_BUDGET_USD = 0.3;
 
 /** A development fix round: resumes the developer's session, so it needs less than the first build. */
 export const FIX_BUDGET_USD = 1.5;

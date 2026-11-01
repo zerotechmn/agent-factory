@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { jsonBlock, READ_TOOLS, type AgentDefinition } from "../agents.shared";
+import { prdForReview, slicePrd } from "../requirements/requirements.utils";
 
 const schema = z.object({
   acceptanceCoverage: z.array(
@@ -37,7 +38,7 @@ Look for, in priority order:
 
 Only report real, specific problems with file references. Do not pad the list with minor nits; "blocking" must be true exactly when a blocker or major exists.
 
-${jsonBlock("Requirements", ctx.handoffs.requirements)}
+${jsonBlock("PRD (features, acceptance criteria, business rules, permissions)", slicePrd(ctx.handoffs.requirements, prdForReview))}
 
 ${jsonBlock("Design", ctx.handoffs.design)}
 

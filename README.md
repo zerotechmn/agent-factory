@@ -36,7 +36,7 @@ research ─► requirements ─► ┌ test cases ┐ ─► development
 | Stage | Kind | Model | Works in | Produces |
 |---|---|---|---|---|
 | Research | agent | Sonnet 5.5 | stage folder + web search/fetch | comparable products, common features, UI patterns, pitfalls, suggested MVP scope, sources |
-| Requirements | agent | Sonnet 5.5 | stage folder | user stories, acceptance criteria, non-goals (informed by the research) |
+| Requirements | agent | Sonnet 5.5 | stage folder | a PRD in the Feature + Screen template: features with Given/When/Then AC, business rules, screens, entities, roles and permissions |
 | Test cases | agent | Sonnet 5.5 | stage folder | Given/When/Then cases mapped to criteria, smoke checks |
 | Design | agent | Opus 5.5 | stage folder | stack, file tree, data model, API, commands, visual direction, Dockerfile plan |
 | Development | agent | Opus 5.5 | `workspace/` | the app, its tests (written test-first) and a Dockerfile |
@@ -56,6 +56,16 @@ How the design saves money and time:
 Research is optional: if it fails, requirements are written from the prompt alone. The agents can use any web stack that runs on the runtimes in the factory image (Node, Bun, Python, Go). Every app has to meet one contract: a single Dockerfile, listening on `$PORT`, with `GET /health` returning 200.
 
 Configuration lives in `packages/factory/src/pipeline/pipeline.constants.ts`. That file sets each stage's model, skills, budget, effort, turn limit and timeout. Agent prompts and output schemas are in `packages/factory/src/agents/<stage>/`, and the verify gate is `packages/factory/src/pipeline/pipeline.gate.ts`.
+
+### PRD (requirements)
+
+The requirements agent writes a PRD following *PRD Template v2 (Feature + Screen)*, using its IDs (`F-xx`, `AC-Fxx-yy`, `BRL-xx`, `S-xx`, `ENT-xx`, …) and its central rule: logic lives in features and business rules, and screens only reference them.
+
+- **The agent only fills in structured data** (`requirements.schema.ts`). The factory renders `REPORT.md` in the template's layout, with its section numbers and column names (`requirements.report.ts`), so the model never spends tokens on formatting. The permission matrix (§3) and traceability matrix (§18) are built from the IDs.
+- **Cross-references are checked by code** (`requirements.validate.ts`): ID formats, duplicates, acceptance criteria naming their feature, and every feature, screen, rule and role reference resolving. If anything is broken, the requirements session is resumed once to fix it (the `requirements (repair)` stage). Anything left over is listed at the end of the PRD.
+- **Each later agent gets only its slice** (`requirements.utils.ts`): test cases get features, AC, rules, permissions and screen states; design gets entities, screens and roles; review gets AC, rules and permissions. Only development gets the whole PRD.
+- **Sections that need a human process are omitted:** approvers, success metrics, deployment, UAT, sign-off, and real external integrations (apps are self-contained). Open questions become decisions the agent took, with its reasons.
+- The PRD is written in the language of the user's prompt.
 
 ### Skills
 
@@ -86,7 +96,7 @@ The portal's **Inspect agent reports** page shows each agent's report. Everythin
 SUMMARY.md            status, stop reason, cost per stage, links to reports
 run.json  ledger.jsonl
 prompt.md
-stages/01-research/  02-requirements/ …
+stages/01-research/  02-requirements/ (REPORT.md is the PRD) …
   REPORT.md           written by the agent for people
   handoff.json        structured output passed to later agents
   input-prompt.md     exactly what the agent was asked

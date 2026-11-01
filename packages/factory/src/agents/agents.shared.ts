@@ -9,20 +9,17 @@ export type StageContext = {
   appPort: number;
   appUrl: string;
   /** Present when development is re-run to fix verify, triage or review findings. */
-  fix: {
-    attempt: number;
-    gate: GateResult | null;
-    /** True when the developer's earlier session is resumed, so the spec is already in its context. */
-    resumed: boolean;
-    review: unknown;
-    triage: unknown;
-  } | null;
+  fix: { attempt: number; gate: GateResult | null; review: unknown; triage: unknown } | null;
   /** The verify result a repair agent (testing triage, deployment repair) is asked to act on. */
   gate: GateResult | null;
   /** Latest successful handoff per stage. Never contains REPORT.md prose. */
   handoffs: Partial<Record<AgentStageKey, unknown>>;
+  /** Problems the factory found in this agent's previous output, for it to correct. */
+  repairIssues: string[] | null;
   /** Present on re-reviews: only the changes since the last review need reading. */
   rereview: { diffRange: string; previousFindings: unknown } | null;
+  /** True when an earlier session of this agent is resumed, so its earlier context is already loaded. */
+  resumed: boolean;
   runId: string;
   stageDir: string;
   userPrompt: string;
@@ -35,6 +32,12 @@ export type AgentDefinition<Schema extends z.ZodObject = z.ZodObject> = {
   /** Doc-only stages run in their own folder; code stages run in the workspace. */
   cwd: (ctx: StageContext) => string;
   mcpServers?: (ctx: StageContext) => Record<string, McpSdkServerConfigWithInstance>;
+  /**
+   * When set, the factory renders REPORT.md from the handoff and the agent is
+   * not asked for a separate prose report, which saves its output tokens and
+   * guarantees a fixed layout (used for the PRD template).
+   */
+  renderReport?: (handoff: unknown) => string;
   role: string;
   /**
    * "doc" agents write documents and barely use tools, so they get a short

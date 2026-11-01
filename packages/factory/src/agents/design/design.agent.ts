@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { jsonBlock, type AgentDefinition } from "../agents.shared";
+import { prdForDesign, slicePrd } from "../requirements/requirements.utils";
 
 const schema = z.object({
   apiEndpoints: z.array(z.object({ description: z.string(), method: z.string(), path: z.string() })),
@@ -13,7 +14,13 @@ const schema = z.object({
   dockerfilePlan: z.string().describe("Base image and build/run steps"),
   fileTree: z.array(z.string()).describe("Planned relative file paths"),
   rationale: z.string(),
-  screens: z.array(z.object({ description: z.string(), name: z.string() })),
+  screens: z.array(
+    z.object({
+      description: z.string().describe("Layout and visual treatment for this screen"),
+      name: z.string(),
+      screenId: z.string().describe("The PRD screen id, e.g. S-04"),
+    }),
+  ),
   stack: z.object({
     backend: z.string(),
     frontend: z.string(),
@@ -25,7 +32,9 @@ const schema = z.object({
 
 export const designAgent: AgentDefinition<typeof schema> = {
   allowedTools: [],
-  buildPrompt: (ctx) => `Design the application for the requirements below.
+  buildPrompt: (ctx) => `Design the application for the PRD below.
+
+The PRD already fixes the product: entities (ENT-xx), screens (S-xx) with their fields, actions, states and permissions, roles and features. Don't redefine them; map them to technology. Your dataModel implements the PRD entities, your apiEndpoints serve the PRD screens and actions, and your screens list keeps the PRD screen ids and adds the visual direction and layout for each.
 
 Choose whatever web stack best fits the product, constrained to runtimes available in the execution environment and to the application contract. Favour boring, well-known tools with few dependencies: the developer must build it, and the factory must run the tests, quickly and cheaply.
 
@@ -33,7 +42,7 @@ A test plan is being written in parallel from the same requirements. It will mos
 
 For the UI, use the factory:frontend-design skill: give the product a deliberate visual direction suited to its subject, and describe it in the screens and rationale so the developer can follow it.
 
-${jsonBlock("Requirements", ctx.handoffs.requirements)}${ctx.handoffs.research ? `\n\n${jsonBlock("UI patterns users expect (from research)", (ctx.handoffs.research as { uiPatterns?: unknown }).uiPatterns)}` : ""}`,
+${jsonBlock("PRD", slicePrd(ctx.handoffs.requirements, prdForDesign))}${ctx.handoffs.research ? `\n\n${jsonBlock("UI patterns users expect (from research)", (ctx.handoffs.research as { uiPatterns?: unknown }).uiPatterns)}` : ""}`,
   cwd: (ctx) => ctx.stageDir,
   role: "Software Designer",
   runtime: "doc",

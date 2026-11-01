@@ -33,7 +33,7 @@ After you finish, the factory itself re-runs your install and test commands, bui
 
 Do not commit node_modules, virtualenvs or build output; add a .gitignore and a .dockerignore.
 
-${jsonBlock("Requirements", ctx.handoffs.requirements)}
+${jsonBlock("PRD", ctx.handoffs.requirements)}
 
 ${jsonBlock("Test plan", ctx.handoffs.testCases)}
 
@@ -55,9 +55,9 @@ ${jsonBlock("Verify gate (automated checks run by the factory)", summarizeGate(f
 ${jsonBlock("Test triage: app bugs found by the tester", fix?.triage ?? null)}
 
 ${jsonBlock("Review findings", fix?.review ?? null)}${
-    fix?.resumed
+    ctx.resumed
       ? ""
-      : `\n\n${jsonBlock("Requirements", ctx.handoffs.requirements)}\n\n${jsonBlock("Design", ctx.handoffs.design)}`
+      : `\n\n${jsonBlock("PRD", ctx.handoffs.requirements)}\n\n${jsonBlock("Design", ctx.handoffs.design)}`
   }`;
 }
 

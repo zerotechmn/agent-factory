@@ -1,6 +1,8 @@
 import { writeFile } from "node:fs/promises";
 
 import { AGENTS } from "../agents/agents.registry";
+import { asPrd } from "../agents/requirements/requirements.utils";
+import { validatePrd } from "../agents/requirements/requirements.validate";
 import { systemPromptFor, type StageContext } from "../agents/agents.shared";
 import { config } from "../lib/config";
 import { callDeployer } from "../lib/deployer";
@@ -23,6 +25,7 @@ import {
   FIX_BUDGET_USD,
   FIX_SKILLS,
   MAX_FIX_ATTEMPTS,
+  PRD_REPAIR_BUDGET_USD,
   STAGE_SETTINGS,
   VERIFY_LABEL,
 } from "./pipeline.constants";
@@ -37,6 +40,7 @@ type StepOptions = {
   budgetUsd?: number;
   fix?: StageContext["fix"];
   gate?: GateResult | null;
+  repairIssues?: string[];
   rereview?: StageContext["rereview"];
   resumeSessionId?: string | null;
   skills?: string[];
@@ -100,6 +104,7 @@ class Pipeline {
 
     const requirements = await this.step("requirements");
     if (requirements.outcome !== "succeeded") return this.stop(requirements, "Requirements failed");
+    await this.repairPrd(requirements.sessionId);
 
     // Both depend only on the requirements, so they run side by side.
     const [testCases, design] = await Promise.all([this.step("testCases"), this.step("design")]);
@@ -123,6 +128,26 @@ class Pipeline {
 
     RunsStore.updateRun(this.id, { appUrl: this.appUrl });
     return this.finish(clean ? "deployed" : "deployed_partial", clean ? null : this.stopReason ?? "Shipped with unresolved issues");
+  }
+
+  /**
+   * The PRD's cross-references are checked by code. If any are broken, the
+   * requirements session is resumed once to correct them: cheap, because the
+   * agent already has its PRD in context, and far cheaper than design and
+   * development working from an inconsistent spec. Remaining problems are
+   * listed in the PRD report and don't stop the run.
+   */
+  private async repairPrd(sessionId: string | null): Promise<void> {
+    const prd = asPrd(this.handoffs.requirements);
+    const issues = prd ? validatePrd(prd) : [];
+    if (issues.length === 0) return;
+    console.info("[pipeline] PRD inconsistent; repairing", { issues: issues.length, runId: this.id });
+    await this.step("requirements", {
+      budgetUsd: PRD_REPAIR_BUDGET_USD,
+      repairIssues: issues,
+      resumeSessionId: sessionId,
+      suffix: "repair",
+    });
   }
 
   /**
@@ -180,7 +205,6 @@ class Pipeline {
         fix: {
           attempt: round + 1,
           gate,
-          resumed: false,
           review: reviewBlocking ? review.handoff : null,
           triage: triageFailed ? { note: "Test triage did not complete; read the verify log." } : triage,
         },
@@ -294,7 +318,9 @@ class Pipeline {
       fix: options.fix ?? null,
       gate: options.gate ?? null,
       handoffs: this.handoffs,
+      repairIssues: options.repairIssues ?? null,
       rereview: options.rereview ?? null,
+      resumed: false,
       runId: this.id,
       stageDir: sp.dir,
       userPrompt: this.prompt,
@@ -302,8 +328,7 @@ class Pipeline {
     };
     const agent = AGENTS[stageKey];
     const resuming = Boolean(options.resumeSessionId);
-    const promptFor = (resumed: boolean) =>
-      agent.buildPrompt(ctx.fix ? { ...ctx, fix: { ...ctx.fix, resumed } } : ctx);
+    const promptFor = (resumed: boolean) => agent.buildPrompt({ ...ctx, resumed });
 
     const result = await runStage({
       allowanceUsd: decision.allowanceUsd,
@@ -313,6 +338,7 @@ class Pipeline {
       mcpServers: agent.mcpServers?.(ctx),
       model: config.FACTORY_MODEL ?? settings.model,
       prompt: promptFor(resuming),
+      renderReport: agent.renderReport,
       resumeSessionId: options.resumeSessionId ?? null,
       runtime: agent.runtime,
       schema: agent.schema,

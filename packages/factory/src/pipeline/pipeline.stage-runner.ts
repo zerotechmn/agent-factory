@@ -24,6 +24,8 @@ export type RunStageInput<Schema extends z.ZodObject> = {
   mcpServers?: Record<string, McpSdkServerConfigWithInstance>;
   model: string;
   prompt: string;
+  /** Renders REPORT.md from the handoff instead of asking the agent for prose. */
+  renderReport?: (handoff: unknown) => string;
   /** Prompt to use if the resume falls back to a fresh session (which lacks the earlier context). */
   freshPrompt?: string;
   /** Continue this earlier session (forked, so its own transcript stays intact). */
@@ -55,7 +57,7 @@ export async function runStage<Schema extends z.ZodObject>(
   const { stagePaths } = input;
   await mkdir(stagePaths.dir, { recursive: true });
 
-  const outputSchema = input.schema.extend({ reportMarkdown: reportField });
+  const outputSchema = input.renderReport ? input.schema : input.schema.extend({ reportMarkdown: reportField });
   const startedAt = Date.now();
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), input.settings.timeoutMs);
@@ -195,8 +197,9 @@ export async function runStage<Schema extends z.ZodObject>(
   }
 
   // Generic `.extend` loses the field types; the schema above guarantees this shape.
-  const { reportMarkdown, ...handoff } = parsed.data as Record<string, unknown> & { reportMarkdown: string };
-  await writeFile(stagePaths.report, `${reportMarkdown.trim()}\n`);
+  const { reportMarkdown, ...handoff } = parsed.data as Record<string, unknown> & { reportMarkdown?: string };
+  const report = input.renderReport ? input.renderReport(handoff) : (reportMarkdown ?? "");
+  await writeFile(stagePaths.report, `${report.trim()}\n`);
   await writeJson(stagePaths.handoff, handoff);
   return finish("succeeded", handoff as z.infer<Schema>, null);
 }

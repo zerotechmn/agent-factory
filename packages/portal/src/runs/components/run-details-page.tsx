@@ -1,5 +1,6 @@
 import { useState } from "react";
-import Markdown from "react-markdown";
+import Markdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Link } from "wouter";
 
 import { useRun, useStageReport } from "../runs.hooks";
@@ -16,8 +17,8 @@ export function RunDetailsPage({ id }: { id: string }) {
       <Link href={`/runs/${id}`} className="text-sm text-stone-500 hover:text-stone-800">← Back to status</Link>
       <h1 className="mt-6 text-2xl font-semibold tracking-tight">Agent reports</h1>
       <p className="mt-1 text-sm text-stone-600">
-        What each agent produced, in its own words. Machine handoffs and full transcripts are in the run folder on the
-        factory host (<code>data/runs/{id}</code>).
+        What each stage produced. The PRD and Verify reports are rendered by the factory; other agents write their own.
+        Machine handoffs and full transcripts are in the run folder on the factory host (<code>data/runs/{id}</code>).
       </p>
 
       <div className="mt-8 grid gap-6 md:grid-cols-[14rem_1fr]">
@@ -41,9 +42,22 @@ export function RunDetailsPage({ id }: { id: string }) {
           {!dirName && <p>No stages have run yet.</p>}
           {report.isLoading && <p>Loading…</p>}
           {report.error && <p>This stage has not written its report yet.</p>}
-          {report.data && <Markdown>{report.data.markdown}</Markdown>}
+          {report.data && (
+            <Markdown components={MARKDOWN_COMPONENTS} remarkPlugins={[remarkGfm]}>
+              {report.data.markdown}
+            </Markdown>
+          )}
         </article>
       </div>
     </main>
   );
 }
+
+// PRD tables can be wider than a phone screen; scroll them instead of the page.
+const MARKDOWN_COMPONENTS: Components = {
+  table: ({ node: _node, ...props }) => (
+    <div className="overflow-x-auto">
+      <table {...props} />
+    </div>
+  ),
+};
