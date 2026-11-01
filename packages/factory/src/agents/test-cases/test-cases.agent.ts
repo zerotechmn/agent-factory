@@ -40,5 +40,6 @@ export const testCasesAgent: AgentDefinition<typeof schema> = {
 ${jsonBlock("Requirements", ctx.handoffs.requirements)}`,
   cwd: (ctx) => ctx.stageDir,
   role: "Test Designer",
+  runtime: "doc",
   schema,
 };

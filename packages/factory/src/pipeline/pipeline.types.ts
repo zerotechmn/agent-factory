@@ -1,4 +1,5 @@
-export const STAGE_KEYS = [
+/** Stages run by an LLM agent. Testing and deployment only run to repair a failed verify gate. */
+export const AGENT_STAGE_KEYS = [
   "research",
   "requirements",
   "testCases",
@@ -8,6 +9,11 @@ export const STAGE_KEYS = [
   "testing",
   "deployment",
 ] as const;
+
+export type AgentStageKey = (typeof AGENT_STAGE_KEYS)[number];
+
+/** "verify" is the deterministic gate: plain code, no LLM, no cost. */
+export const STAGE_KEYS = [...AGENT_STAGE_KEYS, "verify"] as const;
 
 export type StageKey = (typeof STAGE_KEYS)[number];
 
@@ -36,6 +42,9 @@ export type StageSettings = {
   maxTurns: number;
   /** Below this allowance the stage is not worth starting; the run stops early instead. */
   minUsd: number;
+  model: string;
+  /** Plugin skills (`factory:<name>`) this agent may load; empty hides all skills. */
+  skills: string[];
   timeoutMs: number;
 };
 

@@ -1,5 +1,6 @@
 import { query, type McpSdkServerConfigWithInstance, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { mkdir, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import { appendJsonl, writeJson, type StagePaths } from "./pipeline.artifacts";
@@ -12,6 +13,8 @@ export type StageResult<Handoff> = {
   handoff: Handoff | null;
   ledger: LedgerEntry;
   outcome: StageOutcome;
+  /** Lets a later stage resume this conversation (developer fix rounds). */
+  sessionId: string | null;
 };
 
 export type RunStageInput<Schema extends z.ZodObject> = {
@@ -21,12 +24,21 @@ export type RunStageInput<Schema extends z.ZodObject> = {
   mcpServers?: Record<string, McpSdkServerConfigWithInstance>;
   model: string;
   prompt: string;
+  /** Prompt to use if the resume falls back to a fresh session (which lacks the earlier context). */
+  freshPrompt?: string;
+  /** Continue this earlier session (forked, so its own transcript stays intact). */
+  resumeSessionId?: string | null;
+  runtime: "code" | "doc";
   schema: Schema;
   settings: StageSettings;
+  skills: string[];
   stageKey: StageKey;
   stagePaths: StagePaths;
   systemPrompt: string;
 };
+
+/** Vendored engineering skills, loaded as a local plugin; see skills-plugin/NOTICE.md. */
+const SKILLS_PLUGIN_DIR = fileURLToPath(new URL("../../skills-plugin", import.meta.url));
 
 // Every agent returns its handoff plus a human-readable report. The runner
 // splits them: the report goes to REPORT.md for people, the rest to
@@ -49,55 +61,90 @@ export async function runStage<Schema extends z.ZodObject>(
   const timeout = setTimeout(() => abortController.abort(), input.settings.timeoutMs);
   const usage = new UsageTracker(input.model);
 
-  await writeJson(stagePaths.meta, {
+  const baseMeta = {
     allowanceUsd: input.allowanceUsd,
     allowedTools: input.allowedTools,
     effort: input.settings.effort,
     maxTurns: input.settings.maxTurns,
     model: input.model,
+    resumedFrom: input.resumeSessionId ?? null,
+    runtime: input.runtime,
+    skills: input.skills,
     stageKey: input.stageKey,
     startedAt: new Date(startedAt).toISOString(),
-  });
+  };
+  await writeJson(stagePaths.meta, baseMeta);
   await writeFile(`${stagePaths.dir}/input-prompt.md`, input.prompt);
 
-  let result: Extract<SDKMessage, { type: "result" }> | null = null;
-  let thrown: string | null = null;
+  let sessionId: string | null = null;
+  let resumeFellBack = false;
 
-  try {
-    const stream = query({
-      options: {
-        abortController,
-        allowedTools: input.allowedTools,
-        cwd: input.cwd,
-        effort: input.settings.effort,
-        maxBudgetUsd: input.allowanceUsd,
-        maxTurns: input.settings.maxTurns,
-        mcpServers: input.mcpServers,
-        model: input.model,
-        outputFormat: { schema: toOutputSchema(outputSchema), type: "json_schema" },
-        // Deny anything not in allowedTools instead of waiting for a human.
-        permissionMode: "dontAsk",
-        // Ignore any settings/CLAUDE.md on the host so runs are reproducible.
-        settingSources: [],
-        systemPrompt: { append: input.systemPrompt, preset: "claude_code", type: "preset" },
-      },
-      prompt: input.prompt,
-    });
+  type Attempt = { result: ResultMessage | null; sawAssistant: boolean; thrown: string | null };
+  const consume = async (resume: string | null): Promise<Attempt> => {
+    let result: ResultMessage | null = null;
+    let thrown: string | null = null;
+    let sawAssistant = false;
+    try {
+      const stream = query({
+        options: {
+          abortController,
+          allowedTools: input.skills.length > 0 ? [...input.allowedTools, "Skill"] : input.allowedTools,
+          cwd: input.cwd,
+          effort: input.settings.effort,
+          ...(resume ? { forkSession: true, resume } : {}),
+          maxBudgetUsd: input.allowanceUsd,
+          maxTurns: input.settings.maxTurns,
+          mcpServers: input.mcpServers,
+          model: input.model,
+          outputFormat: { schema: toOutputSchema(outputSchema), type: "json_schema" },
+          // Deny anything not in allowedTools instead of waiting for a human.
+          permissionMode: "dontAsk",
+          plugins: [{ path: SKILLS_PLUGIN_DIR, type: "local" }],
+          // Ignore any settings/CLAUDE.md on the host so runs are reproducible.
+          settingSources: [],
+          // Only this stage's skills are listed to the model; an empty list hides all of them.
+          skills: input.skills,
+          systemPrompt:
+            input.runtime === "doc"
+              ? input.systemPrompt
+              : { append: input.systemPrompt, preset: "claude_code", type: "preset" },
+        },
+        prompt: resume ? input.prompt : (input.freshPrompt ?? input.prompt),
+      });
 
-    for await (const message of stream) {
-      await appendJsonl(stagePaths.transcript, message);
-      usage.observe(message);
-      if (message.type === "result") result = message;
+      for await (const message of stream) {
+        await appendJsonl(stagePaths.transcript, message);
+        usage.observe(message);
+        if ("session_id" in message && typeof message.session_id === "string") sessionId = message.session_id;
+        if (message.type === "assistant") sawAssistant = true;
+        if (message.type === "result") result = message;
+      }
+    } catch (error) {
+      thrown = abortController.signal.aborted
+        ? `Stage timed out after ${Math.round(input.settings.timeoutMs / 60_000)} min`
+        : error instanceof Error
+          ? error.message
+          : String(error);
     }
-  } catch (error) {
-    thrown = abortController.signal.aborted
-      ? `Stage timed out after ${Math.round(input.settings.timeoutMs / 60_000)} min`
-      : error instanceof Error
-        ? error.message
-        : String(error);
+    return { result, sawAssistant, thrown };
+  };
+
+  let attempt: Attempt;
+  try {
+    attempt = await consume(input.resumeSessionId ?? null);
+    const failed = attempt.result?.subtype !== "success";
+    // A resume that dies before the model says anything (session file gone,
+    // incompatible history) is a plumbing failure, not the agent's: retry once
+    // as a fresh session rather than burning a fix round.
+    if (input.resumeSessionId && failed && !attempt.sawAssistant && !abortController.signal.aborted) {
+      resumeFellBack = true;
+      await appendJsonl(stagePaths.transcript, { note: "resume failed; retrying as a fresh session", type: "factory" });
+      attempt = await consume(null);
+    }
   } finally {
     clearTimeout(timeout);
   }
+  const { result, thrown } = attempt;
 
   const ledger: LedgerEntry = {
     ...usage.totals(result),
@@ -110,18 +157,14 @@ export async function runStage<Schema extends z.ZodObject>(
 
   const finish = async (outcome: StageOutcome, handoff: z.infer<Schema> | null, error: string | null) => {
     await writeJson(stagePaths.meta, {
-      allowanceUsd: input.allowanceUsd,
-      allowedTools: input.allowedTools,
+      ...baseMeta,
       costUsd: ledger.costUsd,
       durationMs: ledger.durationMs,
-      effort: input.settings.effort,
       error,
-      maxTurns: input.settings.maxTurns,
-      model: input.model,
       outcome,
+      resumeFellBack,
       sdkOutcome: ledger.outcome,
-      stageKey: input.stageKey,
-      startedAt: new Date(startedAt).toISOString(),
+      sessionId,
       tokens: {
         cacheCreationInput: ledger.cacheCreationInputTokens,
         cacheReadInput: ledger.cacheReadInputTokens,
@@ -129,7 +172,7 @@ export async function runStage<Schema extends z.ZodObject>(
         output: ledger.outputTokens,
       },
     });
-    return { error, handoff, ledger, outcome };
+    return { error, handoff, ledger, outcome, sessionId };
   };
 
   if (result?.subtype === "error_max_budget_usd") {
@@ -158,6 +201,8 @@ export async function runStage<Schema extends z.ZodObject>(
   return finish("succeeded", handoff as z.infer<Schema>, null);
 }
 
+type ResultMessage = Extract<SDKMessage, { type: "result" }>;
+
 function toOutputSchema(schema: z.ZodObject): Record<string, unknown> {
   // The CLI's validator rejects zod's "$schema" draft-2020-12 marker; the schema body is fine without it.
   const { $schema: _ignored, ...rest } = z.toJSONSchema(schema) as Record<string, unknown>;
@@ -172,6 +217,7 @@ function failureReport(label: string, error: string): string {
 // returned a result message (timeout/crash) and so gave us no cost figure.
 const FALLBACK_PRICES: Record<string, { cacheRead: number; cacheWrite: number; input: number; output: number }> = {
   "claude-opus-5-5": { cacheRead: 0.2, cacheWrite: 5, input: 4, output: 20 },
+  "claude-sonnet-5-5": { cacheRead: 0.2, cacheWrite: 2.5, input: 2, output: 10 },
 };
 
 type UsageTotals = Pick<

@@ -4,30 +4,33 @@ import { jsonBlock, READ_TOOLS, type AgentDefinition } from "../agents.shared";
 import { DEPLOYMENT_TOOL_NAMES, deploymentMcpServer } from "./deployment.tools";
 
 const schema = z.object({
+  changes: z.array(z.string()).describe("Files changed and why"),
   containerPort: z.number().int(),
   deployed: z.boolean(),
   healthStatus: z.number().int().nullable(),
   notes: z.string(),
-  url: z.string(),
 });
 
+/**
+ * Runs only when the verify gate could not build, start or health-check the
+ * container. The happy path needs no agent: the gate deploys by itself.
+ */
 export const deploymentAgent: AgentDefinition<typeof schema> = {
   allowedTools: [...READ_TOOLS, "Edit", "Write", ...DEPLOYMENT_TOOL_NAMES],
-  buildPrompt: (ctx) => `Deploy the application in the current directory.
+  buildPrompt: (ctx) => `The factory's verify gate could not get this app's container running. Repair the deployment.
 
-1. Read the Dockerfile and check it satisfies the application contract (listens on $PORT, binds 0.0.0.0, single container).
-2. Call docker_build. If it fails, fix the Dockerfile/.dockerignore (or a trivial build config issue) and rebuild. Do not rewrite application features.
-3. Call docker_run with the port the app listens on (normally ${ctx.appPort}; the container receives PORT=<that port>).
-4. Call http_check on /health and /. On failure, read container_logs, fix, rebuild and rerun.
-5. Run the GET smoke checks from the test plan with http_check.
+1. Read the failure output below, the Dockerfile, .dockerignore and the start command.
+2. Fix the cause. Stay within deployment concerns: Dockerfile, .dockerignore, start scripts, build config, binding to 0.0.0.0 and $PORT, and the /health route if it is missing. Do not rewrite application features.
+3. Call docker_build, then docker_run with the port the app listens on (normally ${ctx.appPort}; the container receives PORT=<that port>), then http_check on /health and /. On failure read container_logs, fix and repeat.
 
-The public URL will be ${ctx.appUrl}. Report deployed=true only if /health returned 200.
+Report deployed=true only if /health returned 200. The public URL will be ${ctx.appUrl}.
 
-${jsonBlock("Design", ctx.handoffs.design)}
+${jsonBlock("Verify gate failure", { failedSteps: ctx.gate?.failedSteps, logs: ctx.gate?.logs, smokeFailures: ctx.gate?.smoke.filter((s) => !s.ok) })}
 
-${jsonBlock("Test plan (smoke checks)", (ctx.handoffs.testCases as { smokeChecks?: unknown } | undefined)?.smokeChecks)}`,
+${jsonBlock("Design", ctx.handoffs.design)}`,
   cwd: (ctx) => ctx.workspaceDir,
   mcpServers: (ctx) => ({ deployer: deploymentMcpServer(ctx.runId) }),
   role: "Deployment Engineer",
+  runtime: "code",
   schema,
 };

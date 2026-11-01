@@ -1,4 +1,4 @@
-import type { StageKey } from "../pipeline/pipeline.types";
+import type { AgentStageKey } from "../pipeline/pipeline.types";
 import type { AgentDefinition } from "./agents.shared";
 import { deploymentAgent } from "./deployment/deployment.agent";
 import { designAgent } from "./design/design.agent";
@@ -9,7 +9,7 @@ import { reviewAgent } from "./review/review.agent";
 import { testCasesAgent } from "./test-cases/test-cases.agent";
 import { testingAgent } from "./testing/testing.agent";
 
-export const AGENTS: Record<StageKey, AgentDefinition> = {
+export const AGENTS: Record<AgentStageKey, AgentDefinition> = {
   deployment: deploymentAgent,
   design: designAgent,
   development: developmentAgent,

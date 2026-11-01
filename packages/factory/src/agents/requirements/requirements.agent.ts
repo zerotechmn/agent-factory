@@ -29,5 +29,6 @@ ${ctx.handoffs.research ? `Market research on similar products is attached. Use 
 ${ctx.userPrompt}${ctx.handoffs.research ? `\n\n${jsonBlock("Research on similar products", ctx.handoffs.research)}` : ""}`,
   cwd: (ctx) => ctx.stageDir,
   role: "Requirements Analyst",
+  runtime: "doc",
   schema,
 };

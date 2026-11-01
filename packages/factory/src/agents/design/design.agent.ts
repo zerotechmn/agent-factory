@@ -25,14 +25,17 @@ const schema = z.object({
 
 export const designAgent: AgentDefinition<typeof schema> = {
   allowedTools: [],
-  buildPrompt: (ctx) => `Design the application for the requirements and test plan below.
+  buildPrompt: (ctx) => `Design the application for the requirements below.
 
-Choose whatever web stack best fits the product, constrained to runtimes available in the execution environment and to the application contract. Favour boring, well-known tools with few dependencies: the developer must build it, and the tester must run the tests, quickly and cheaply. The plan must make every test case in the test plan implementable.
+Choose whatever web stack best fits the product, constrained to runtimes available in the execution environment and to the application contract. Favour boring, well-known tools with few dependencies: the developer must build it, and the factory must run the tests, quickly and cheaply.
 
-${jsonBlock("Requirements", ctx.handoffs.requirements)}
+A test plan is being written in parallel from the same requirements. It will mostly contain HTTP-level API tests, unit tests and a few browser-free end-to-end flows, so pick a test framework that handles HTTP-level tests well, and a test command that runs the whole suite non-interactively and exits non-zero on failure.
 
-${jsonBlock("Test plan", ctx.handoffs.testCases)}${ctx.handoffs.research ? `\n\n${jsonBlock("UI patterns users expect (from research)", (ctx.handoffs.research as { uiPatterns?: unknown }).uiPatterns)}` : ""}`,
+For the UI, use the factory:frontend-design skill: give the product a deliberate visual direction suited to its subject, and describe it in the screens and rationale so the developer can follow it.
+
+${jsonBlock("Requirements", ctx.handoffs.requirements)}${ctx.handoffs.research ? `\n\n${jsonBlock("UI patterns users expect (from research)", (ctx.handoffs.research as { uiPatterns?: unknown }).uiPatterns)}` : ""}`,
   cwd: (ctx) => ctx.stageDir,
   role: "Software Designer",
+  runtime: "doc",
   schema,
 };

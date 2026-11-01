@@ -3,30 +3,43 @@ import { z } from "zod";
 import { CODE_TOOLS, jsonBlock, type AgentDefinition } from "../agents.shared";
 
 const schema = z.object({
+  appBugs: z
+    .array(
+      z.object({
+        details: z.string().describe("Command, expected vs actual, and the relevant error output"),
+        suspectedCause: z.string().describe("File/function and the root cause you traced, if found"),
+        testCaseId: z.string().describe("Test plan id, or the failing test's name if it has none"),
+      }),
+    )
+    .describe("Failures caused by application code, for the developer to fix"),
   commandsRun: z.array(z.string()),
-  failures: z.array(z.object({ details: z.string(), testCaseId: z.string() })),
-  passed: z.boolean().describe("True only if the suite passes and every smoke check passes"),
-  results: z.array(
-    z.object({ notes: z.string(), status: z.enum(["pass", "fail", "not_run"]), testCaseId: z.string() }),
-  ),
+  passed: z.boolean().describe("True only if the full test suite now passes"),
+  testsFixed: z.array(z.string()).describe("Test files you corrected, and why"),
 });
 
+/**
+ * Runs only when the verify gate's test step fails. Separating "the test is
+ * wrong" from "the app is wrong" is a judgement call the gate can't make,
+ * and getting it right stops the developer from bending app code to fit a
+ * broken test.
+ */
 export const testingAgent: AgentDefinition<typeof schema> = {
   allowedTools: CODE_TOOLS,
-  buildPrompt: (ctx) => `Independently verify the application in the current directory.
+  buildPrompt: (ctx) => `The factory's automated verify gate ran this app's test suite and it failed. Triage the failures.
 
-1. Install dependencies and run the automated test suite with the documented test command.
-2. Start the server on a free port in the background and run every smoke check from the test plan with curl; then stop the server.
-3. For each test case in the test plan, record pass/fail/not_run. If a planned case has no automated test, verify it manually over HTTP where feasible.
+Follow the factory:systematic-debugging skill: read the errors, reproduce each failure with the test command, and trace it to its root cause before deciding anything.
 
-You may add or fix TEST files only (never application code) if a planned test case is missing; the developer fixes app bugs. Report failures with enough detail (command, expected vs actual, error output excerpt) for the developer to fix them.
+For each failing test, decide:
+- The test is wrong (bad assertion, wrong expectation versus the test plan, flaky timing, missing setup, bad test command): fix the TEST files or test configuration yourself.
+- The application is wrong: do NOT touch application code. Record it in appBugs with enough detail for the developer to fix it.
 
-${jsonBlock("Test plan", ctx.handoffs.testCases)}
+Then re-run the full suite with the same commands. Set passed=true only if the whole suite passes after your test fixes.
 
-${jsonBlock("Design", ctx.handoffs.design)}
+${jsonBlock("Verify gate failure", { command: ctx.gate?.tests?.command, log: ctx.gate?.logs.tests, timedOut: ctx.gate?.tests?.timedOut })}
 
-${jsonBlock("Developer handoff", ctx.handoffs.development)}`,
+${jsonBlock("Test plan", ctx.handoffs.testCases)}`,
   cwd: (ctx) => ctx.workspaceDir,
   role: "QA Tester",
+  runtime: "code",
   schema,
 };

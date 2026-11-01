@@ -1,16 +1,28 @@
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import type { z } from "zod";
 
-import type { StageKey } from "../pipeline/pipeline.types";
+import type { GateResult } from "../pipeline/pipeline.gate";
+import type { AgentStageKey } from "../pipeline/pipeline.types";
 
 export type StageContext = {
   allowanceUsd: number;
   appPort: number;
   appUrl: string;
+  /** Present when development is re-run to fix verify, triage or review findings. */
+  fix: {
+    attempt: number;
+    gate: GateResult | null;
+    /** True when the developer's earlier session is resumed, so the spec is already in its context. */
+    resumed: boolean;
+    review: unknown;
+    triage: unknown;
+  } | null;
+  /** The verify result a repair agent (testing triage, deployment repair) is asked to act on. */
+  gate: GateResult | null;
   /** Latest successful handoff per stage. Never contains REPORT.md prose. */
-  handoffs: Partial<Record<StageKey, unknown>>;
-  /** Present when development is re-run to fix review/test findings. */
-  fix: { attempt: number; review: unknown; testing: unknown } | null;
+  handoffs: Partial<Record<AgentStageKey, unknown>>;
+  /** Present on re-reviews: only the changes since the last review need reading. */
+  rereview: { diffRange: string; previousFindings: unknown } | null;
   runId: string;
   stageDir: string;
   userPrompt: string;
@@ -24,6 +36,12 @@ export type AgentDefinition<Schema extends z.ZodObject = z.ZodObject> = {
   cwd: (ctx: StageContext) => string;
   mcpServers?: (ctx: StageContext) => Record<string, McpSdkServerConfigWithInstance>;
   role: string;
+  /**
+   * "doc" agents write documents and barely use tools, so they get a short
+   * system prompt instead of the full Claude Code preset, saving its tokens on
+   * every turn. "code" agents work in the workspace and keep the preset.
+   */
+  runtime: "code" | "doc";
   schema: Schema;
 };
 

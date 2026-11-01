@@ -8,6 +8,7 @@ import * as RunsStore from "../runs/runs.store";
 import {
   appendLedger,
   commitWorkspace,
+  headCommit,
   initRunDir,
   runPaths,
   stagePaths,
@@ -15,24 +16,39 @@ import {
   writeJson,
   type RunPaths,
 } from "./pipeline.artifacts";
-import { createBudget, decideAllowance, recordSpend, type Budget } from "./pipeline.budget";
+import { commitAllowance, createBudget, decideAllowance, recordSpend, type Budget } from "./pipeline.budget";
 import {
   APP_PORT,
   DEPLOY_RESERVE_USD,
   FIX_BUDGET_USD,
+  FIX_SKILLS,
   MAX_FIX_ATTEMPTS,
   STAGE_SETTINGS,
+  VERIFY_LABEL,
 } from "./pipeline.constants";
+import { runGate, type GateMode, type GateResult, type SmokeCheck } from "./pipeline.gate";
 import { runStage, type StageOutcome } from "./pipeline.stage-runner";
-import type { RunStatus, StageKey } from "./pipeline.types";
+import type { AgentStageKey, RunStatus } from "./pipeline.types";
 
-type StepResult = { handoff: unknown; outcome: StageOutcome | "not_started" };
+type StepOutcome = StageOutcome | "not_started";
+type StepResult = { handoff: unknown; outcome: StepOutcome; sessionId: string | null };
+
+type StepOptions = {
+  budgetUsd?: number;
+  fix?: StageContext["fix"];
+  gate?: GateResult | null;
+  rereview?: StageContext["rereview"];
+  resumeSessionId?: string | null;
+  skills?: string[];
+  suffix?: string;
+};
 
 type ReviewHandoff = { blocking: boolean; findings: unknown[] };
-type TestingHandoff = { failures: unknown[]; passed: boolean };
+type TriageHandoff = { appBugs: unknown[]; passed: boolean };
+type Commands = { install: string; test: string };
 
-/** Stages that edit the workspace get a git commit afterwards so diffs per agent are inspectable. */
-const WORKSPACE_STAGES = new Set<StageKey>(["development", "testing", "deployment"]);
+/** Agents that edit the workspace get a git commit afterwards so diffs per agent are inspectable. */
+const WORKSPACE_STAGES = new Set<AgentStageKey>(["development", "testing", "deployment"]);
 
 /**
  * Runs the whole factory for one prompt. Never throws: every outcome ends in
@@ -53,10 +69,16 @@ export async function executeRun({ id, prompt }: { id: string; prompt: string })
 
 class Pipeline {
   private budget: Budget;
-  private readonly handoffs: Partial<Record<StageKey, unknown>> = {};
+  private readonly handoffs: Partial<Record<AgentStageKey, unknown>> = {};
   private seq = 0;
   private stopReason: string | null = null;
   private readonly appUrl: string;
+  /** Labels of stages in flight; more than one while parallel branches run. */
+  private readonly running = new Set<string>();
+  /** The developer's latest session, resumed by fix rounds so they start with full context. */
+  private devSessionId: string | null = null;
+  /** Workspace commit the live container was built from. */
+  private deployedCommit: string | null = null;
 
   constructor(
     private readonly id: string,
@@ -71,85 +93,198 @@ class Pipeline {
   async run(): Promise<void> {
     await this.writeRunJson("running");
 
-    // 0: research. Helpful but not essential, so a failure (search outage, bad
-    // output) only means requirements are written without it. A budget stop
-    // here still ends the run below, at requirements.
+    // Research is helpful but not essential: if it fails, requirements are
+    // written from the prompt alone. A budget stop still ends the run at the
+    // next step.
     await this.step("research");
 
-    // 1-3: specification. Without these there is nothing coherent to build.
-    for (const key of ["requirements", "testCases", "design"] as const) {
-      const step = await this.step(key);
-      if (step.outcome !== "succeeded") return this.finish(this.failStatus(step), this.stopReason ?? `${STAGE_SETTINGS[key].label} failed`);
-    }
+    const requirements = await this.step("requirements");
+    if (requirements.outcome !== "succeeded") return this.stop(requirements, "Requirements failed");
 
-    // 4: build.
+    // Both depend only on the requirements, so they run side by side.
+    const [testCases, design] = await Promise.all([this.step("testCases"), this.step("design")]);
+    if (testCases.outcome !== "succeeded") return this.stop(testCases, "Test cases failed");
+    if (design.outcome !== "succeeded") return this.stop(design, "Design failed");
+
     const dev = await this.step("development");
+    this.devSessionId = dev.sessionId;
     if (!(await workspaceHasFile(this.paths, "Dockerfile"))) {
-      return this.finish(this.failStatus(dev), this.stopReason ?? "Development produced no deployable app (no Dockerfile)");
+      return this.stop(dev, "Development produced no deployable app (no Dockerfile)");
     }
 
-    // 5-6: review + test, with a bounded fix loop. Any budget stop here skips
-    // straight to deployment: shipping something beats shipping nothing.
-    let clean = false;
-    for (let attempt = 0; attempt <= MAX_FIX_ATTEMPTS; attempt++) {
-      const suffix = attempt === 0 ? undefined : `round-${attempt + 1}`;
-      const review = await this.step("review", { suffix });
-      if (review.outcome === "stopped_budget" || review.outcome === "not_started") break;
-      const testing = await this.step("testing", { suffix });
-      if (testing.outcome === "stopped_budget" || testing.outcome === "not_started") break;
-
-      const reviewOk = review.outcome === "succeeded" && !(review.handoff as ReviewHandoff).blocking;
-      const testsOk = testing.outcome === "succeeded" && (testing.handoff as TestingHandoff).passed;
-      if (reviewOk && testsOk) {
-        clean = true;
-        break;
-      }
-      if (attempt === MAX_FIX_ATTEMPTS) {
-        this.stopReason ??= `Unresolved review/test issues after ${MAX_FIX_ATTEMPTS} fix attempts`;
-        break;
-      }
-
-      const fix = await this.step("development", {
-        budgetUsd: FIX_BUDGET_USD,
-        fix: { attempt: attempt + 1, review: review.handoff, testing: testing.handoff },
-        suffix: `fix-${attempt + 1}`,
-      });
-      if (fix.outcome === "stopped_budget" || fix.outcome === "not_started") break;
-    }
-
-    // 7: deploy, funded by the reserve that earlier stages could not touch.
-    const deploy = await this.step("deployment");
-    const healthy = await this.verifyHealth();
+    const { clean, lastGate } = await this.verifyAndFix();
+    const healthy = await this.ensureDeployed(lastGate);
     if (!healthy) {
-      return this.finish(this.failStatus(deploy), this.stopReason ?? "Deployment did not pass the /health check");
+      return this.finish(
+        this.stopReason ? "failed_budget" : "failed",
+        this.stopReason ?? "The app never passed its /health check",
+      );
     }
 
     RunsStore.updateRun(this.id, { appUrl: this.appUrl });
     return this.finish(clean ? "deployed" : "deployed_partial", clean ? null : this.stopReason ?? "Shipped with unresolved issues");
   }
 
-  private async step(
-    stageKey: StageKey,
-    options: { budgetUsd?: number; fix?: StageContext["fix"]; suffix?: string } = {},
-  ): Promise<StepResult> {
+  /**
+   * Verify (free, deterministic) and review (LLM, read-only) run in parallel.
+   * Whatever fails gets the cheapest agent that can fix it: deployment repair
+   * for a broken container, test triage for failing tests, and a resumed
+   * developer session only for real app bugs or blocking review findings.
+   */
+  private async verifyAndFix(): Promise<{ clean: boolean; lastGate: GateResult | null }> {
+    let previousReview: ReviewHandoff | null = null;
+    let reviewedCommit: string | null = null;
+    let lastGate: GateResult | null = null;
+
+    for (let round = 0; ; round++) {
+      const suffix = round === 0 ? undefined : `round-${round + 1}`;
+      const commitBeforeReview = await headCommit(this.paths);
+      const rereview =
+        previousReview && reviewedCommit ? { diffRange: `${reviewedCommit}..HEAD`, previousFindings: previousReview } : null;
+
+      const [gate, review] = await Promise.all([this.verify("full", suffix), this.step("review", { rereview, suffix })]);
+      lastGate = gate;
+      if (review.outcome === "succeeded") {
+        previousReview = review.handoff as ReviewHandoff;
+        reviewedCommit = commitBeforeReview;
+      }
+      const reviewBlocking = review.outcome === "succeeded" && (review.handoff as ReviewHandoff).blocking;
+
+      if (gate.passed && review.outcome === "succeeded" && !reviewBlocking) return { clean: true, lastGate };
+      if (isBudgetStop(review.outcome)) return { clean: false, lastGate };
+      if (round >= MAX_FIX_ATTEMPTS) {
+        this.stopReason ??= `Unresolved verify/review issues after ${MAX_FIX_ATTEMPTS} fix rounds`;
+        return { clean: false, lastGate };
+      }
+
+      if (!gate.containerOk) {
+        const repair = await this.step("deployment", { gate, suffix: `repair-${round + 1}` });
+        if (isBudgetStop(repair.outcome)) return { clean: false, lastGate };
+      }
+
+      let triage: TriageHandoff | null = null;
+      let triageFailed = false;
+      if (gate.failedSteps.includes("tests")) {
+        const result = await this.step("testing", { gate, suffix: `triage-${round + 1}` });
+        if (isBudgetStop(result.outcome)) return { clean: false, lastGate };
+        triage = result.outcome === "succeeded" ? (result.handoff as TriageHandoff) : null;
+        triageFailed = result.outcome !== "succeeded";
+      }
+
+      const needsDevFix =
+        reviewBlocking || gate.failedSteps.includes("smoke") || triageFailed || (triage?.appBugs.length ?? 0) > 0;
+      if (!needsDevFix) continue;
+
+      const fix = await this.step("development", {
+        budgetUsd: FIX_BUDGET_USD,
+        fix: {
+          attempt: round + 1,
+          gate,
+          resumed: false,
+          review: reviewBlocking ? review.handoff : null,
+          triage: triageFailed ? { note: "Test triage did not complete; read the verify log." } : triage,
+        },
+        resumeSessionId: this.devSessionId,
+        skills: FIX_SKILLS,
+        suffix: `fix-${round + 1}`,
+      });
+      if (fix.sessionId) this.devSessionId = fix.sessionId;
+      if (isBudgetStop(fix.outcome)) return { clean: false, lastGate };
+    }
+  }
+
+  /**
+   * A green verify already deployed the app. This makes sure the live
+   * container matches the final code (a budget stop can land after a fix
+   * that was never re-verified) and gives a broken container one repair,
+   * funded by the reserve.
+   */
+  private async ensureDeployed(lastGate: GateResult | null): Promise<boolean> {
+    let gate = lastGate;
+    const head = await headCommit(this.paths);
+    if (!gate?.containerOk || head !== this.deployedCommit) gate = await this.verify("container", "final");
+    if (!gate.containerOk) {
+      const repair = await this.step("deployment", { gate, suffix: "final" });
+      if (repair.outcome === "succeeded") await this.verify("container", "after-repair");
+    }
+    return this.verifyHealth();
+  }
+
+  private async verify(mode: GateMode, suffix?: string): Promise<GateResult> {
+    // Sequence number is taken synchronously so a parallel stage can't reuse it.
+    this.seq += 1;
+    const seq = this.seq;
+    const sp = stagePaths(this.paths, seq, "verify", suffix);
+    const label = suffix ? `${VERIFY_LABEL} (${suffix})` : VERIFY_LABEL;
+    RunsStore.startStage(this.id, { dirName: sp.dirName, label, seq, stageKey: "verify" });
+    this.markRunning(label, true);
+    const startedAt = Date.now();
+    const commit = await headCommit(this.paths);
+
+    const dev = this.handoffs.development as { commands?: Commands } | undefined;
+    const design = this.handoffs.design as { commands?: Commands } | undefined;
+    const testPlan = this.handoffs.testCases as { smokeChecks?: SmokeCheck[] } | undefined;
+    const gate = await runGate({
+      appPort: APP_PORT,
+      // The developer reports the commands it actually verified; the design's are a fallback.
+      commands: dev?.commands ?? design?.commands ?? null,
+      mode,
+      paths: this.paths,
+      runId: this.id,
+      smokeChecks: testPlan?.smokeChecks ?? [],
+      stagePaths: sp,
+    });
+    if (gate.containerOk) this.deployedCommit = commit;
+
+    await appendLedger(this.paths, {
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 0,
+      costUsd: 0,
+      durationMs: Date.now() - startedAt,
+      inputTokens: 0,
+      outcome: gate.passed ? "passed" : `failed: ${gate.failedSteps.join(", ")}`,
+      outputTokens: 0,
+      stageDir: sp.dirName,
+      stageKey: "verify",
+      timestamp: new Date().toISOString(),
+    });
+    RunsStore.finishStage(this.id, seq, {
+      costUsd: 0,
+      error: gate.passed ? null : `Failed: ${gate.failedSteps.join(", ")}`,
+      status: gate.passed ? "succeeded" : "failed",
+    });
+    this.markRunning(label, false);
+    await this.writeRunJson("running");
+    return gate;
+  }
+
+  private async step(stageKey: AgentStageKey, options: StepOptions = {}): Promise<StepResult> {
     const settings = STAGE_SETTINGS[stageKey];
+    const label = options.fix
+      ? `Fix ${options.fix.attempt}`
+      : options.suffix
+        ? `${settings.label} (${options.suffix})`
+        : settings.label;
+
+    // Everything up to the first await runs synchronously, so two steps
+    // started with Promise.all can't both claim the same money or sequence number.
     const decision = decideAllowance({
       budget: this.budget,
-      isDeployment: stageKey === "deployment",
+      canUseReserve: stageKey === "deployment",
       minUsd: settings.minUsd,
       requestedUsd: options.budgetUsd ?? settings.budgetUsd,
     });
     if (decision.kind === "stop") {
       console.info("[pipeline] early stop", { reason: decision.reason, runId: this.id, stageKey });
-      this.stopReason ??= `Stopped before ${settings.label}: ${decision.reason}`;
-      return { handoff: null, outcome: "not_started" };
+      this.stopReason ??= `Stopped before ${label}: ${decision.reason}`;
+      return { handoff: null, outcome: "not_started", sessionId: null };
     }
-
+    this.budget = commitAllowance(this.budget, decision.allowanceUsd);
     this.seq += 1;
-    const sp = stagePaths(this.paths, this.seq, stageKey, options.suffix);
-    const label = options.fix ? `Fix ${options.fix.attempt}` : options.suffix ? `${settings.label} (${options.suffix})` : settings.label;
-    RunsStore.startStage(this.id, { dirName: sp.dirName, label, seq: this.seq, stageKey });
-    RunsStore.updateRun(this.id, { currentStage: label });
+    const seq = this.seq;
+    const sp = stagePaths(this.paths, seq, stageKey, options.suffix);
+    RunsStore.startStage(this.id, { dirName: sp.dirName, label, seq, stageKey });
+    this.markRunning(label, true);
     await this.writeRunJson("running");
 
     const ctx: StageContext = {
@@ -157,31 +292,40 @@ class Pipeline {
       appPort: APP_PORT,
       appUrl: this.appUrl,
       fix: options.fix ?? null,
+      gate: options.gate ?? null,
       handoffs: this.handoffs,
+      rereview: options.rereview ?? null,
       runId: this.id,
       stageDir: sp.dir,
       userPrompt: this.prompt,
       workspaceDir: this.paths.workspace,
     };
     const agent = AGENTS[stageKey];
+    const resuming = Boolean(options.resumeSessionId);
+    const promptFor = (resumed: boolean) =>
+      agent.buildPrompt(ctx.fix ? { ...ctx, fix: { ...ctx.fix, resumed } } : ctx);
 
     const result = await runStage({
       allowanceUsd: decision.allowanceUsd,
       allowedTools: agent.allowedTools,
       cwd: agent.cwd(ctx),
+      freshPrompt: promptFor(false),
       mcpServers: agent.mcpServers?.(ctx),
-      model: config.FACTORY_MODEL,
-      prompt: agent.buildPrompt(ctx),
+      model: config.FACTORY_MODEL ?? settings.model,
+      prompt: promptFor(resuming),
+      resumeSessionId: options.resumeSessionId ?? null,
+      runtime: agent.runtime,
       schema: agent.schema,
       settings,
+      skills: options.skills ?? settings.skills,
       stageKey,
       stagePaths: sp,
       systemPrompt: systemPromptFor(agent.role, ctx),
     });
 
-    this.budget = recordSpend(this.budget, result.ledger);
+    this.budget = recordSpend(this.budget, result.ledger, { releaseUsd: decision.allowanceUsd });
     await appendLedger(this.paths, result.ledger);
-    RunsStore.finishStage(this.id, this.seq, {
+    RunsStore.finishStage(this.id, seq, {
       costUsd: result.ledger.costUsd,
       error: result.error,
       status: result.outcome,
@@ -191,6 +335,7 @@ class Pipeline {
 
     if (result.outcome === "succeeded") this.handoffs[stageKey] = result.handoff;
     if (result.outcome === "stopped_budget") this.stopReason ??= `${label}: ${result.error}`;
+    this.markRunning(label, false);
     console.info("[pipeline] stage done", {
       costUsd: result.ledger.costUsd.toFixed(4),
       outcome: result.outcome,
@@ -198,10 +343,10 @@ class Pipeline {
       spentUsd: this.budget.spentUsd.toFixed(4),
       stage: sp.dirName,
     });
-    return { handoff: result.handoff, outcome: result.outcome };
+    return { handoff: result.handoff, outcome: result.outcome, sessionId: result.sessionId };
   }
 
-  /** Independent of what the deployment agent claims: ask the deployer directly. */
+  /** Independent of what any agent claims: ask the deployer directly. */
   private async verifyHealth(): Promise<boolean> {
     const result = await callDeployer("/check", { path: "/health", runId: this.id });
     if (!result.ok) return false;
@@ -212,8 +357,15 @@ class Pipeline {
     }
   }
 
-  private failStatus(step: StepResult): RunStatus {
-    return step.outcome === "stopped_budget" || step.outcome === "not_started" ? "failed_budget" : "failed";
+  private markRunning(label: string, on: boolean): void {
+    if (on) this.running.add(label);
+    else this.running.delete(label);
+    RunsStore.updateRun(this.id, { currentStage: this.running.size ? [...this.running].join(" + ") : null });
+  }
+
+  private stop(step: StepResult, fallbackReason: string): Promise<void> {
+    const status: RunStatus = isBudgetStop(step.outcome) ? "failed_budget" : "failed";
+    return this.finish(status, this.stopReason ?? fallbackReason);
   }
 
   async finish(status: RunStatus, stopReason: string | null): Promise<void> {
@@ -257,7 +409,11 @@ ${this.prompt}
 |---|---|---|---|---|
 ${rows}
 
-Each stage folder also holds \`handoff.json\` (what the next agent received), \`input-prompt.md\` (what this agent was asked), \`transcript.jsonl\` (full agent trace) and \`meta.json\`. Per-stage code changes: \`git -C workspace log -p\`.
+"Verify" stages are the factory's own automated checks (tests, image build, container health, smoke checks) and cost nothing. Agent stage folders also hold \`handoff.json\` (what later agents received), \`input-prompt.md\` (what the agent was asked), \`transcript.jsonl\` (full agent trace) and \`meta.json\` (model, skills, tokens, cost, resumed session). Per-stage code changes: \`git -C workspace log -p\`.
 `;
   }
+}
+
+function isBudgetStop(outcome: StepOutcome): boolean {
+  return outcome === "stopped_budget" || outcome === "not_started";
 }

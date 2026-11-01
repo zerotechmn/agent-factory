@@ -19,7 +19,7 @@ export const STAGE_STATUS_ICONS: Record<StageStatus, string> = {
   succeeded: "✓",
 };
 
-/** The planned sequence, shown greyed out before a stage starts. */
-export const PLANNED_STAGES = ["Research", "Requirements", "Test cases", "Design", "Development", "Review", "Testing", "Deployment"];
+/** The planned happy path, shown greyed out before a stage starts. Repair and fix stages appear only when they run. */
+export const PLANNED_STAGES = ["Research", "Requirements", "Test cases", "Design", "Development", "Verify", "Review"];
 
 export const REDIRECT_DELAY_MS = 4_000;

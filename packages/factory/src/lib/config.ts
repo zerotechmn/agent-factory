@@ -7,7 +7,9 @@ const envSchema = z.object({
   DAILY_SPEND_CAP_USD: z.coerce.number().positive().default(100),
   DATA_DIR: z.string().default("./data"),
   DEPLOYER_URL: z.string().default("http://localhost:4100"),
-  FACTORY_MODEL: z.string().default("claude-opus-5-5"),
+  /** When set, overrides every stage's model (e.g. a cheap model for smoke-testing the pipeline). */
+  // Compose passes an unset variable through as "", which must mean "no override".
+  FACTORY_MODEL: z.preprocess((value) => (value === "" ? undefined : value), z.string().optional()),
   MAX_CONCURRENT_RUNS: z.coerce.number().int().positive().default(1),
   PORT: z.coerce.number().int().positive().default(4000),
   /** Host port Traefik is published on; included in app URLs when it isn't 80. */

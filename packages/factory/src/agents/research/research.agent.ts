@@ -36,5 +36,6 @@ Search costs money and time: run at most about 5 web searches and fetch at most 
 ${ctx.userPrompt}`,
   cwd: (ctx) => ctx.stageDir,
   role: "Product Researcher",
+  runtime: "doc",
   schema,
 };
