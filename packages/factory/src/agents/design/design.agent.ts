@@ -31,7 +31,7 @@ Choose whatever web stack best fits the product, constrained to runtimes availab
 
 ${jsonBlock("Requirements", ctx.handoffs.requirements)}
 
-${jsonBlock("Test plan", ctx.handoffs.testCases)}`,
+${jsonBlock("Test plan", ctx.handoffs.testCases)}${ctx.handoffs.research ? `\n\n${jsonBlock("UI patterns users expect (from research)", (ctx.handoffs.research as { uiPatterns?: unknown }).uiPatterns)}` : ""}`,
   cwd: (ctx) => ctx.stageDir,
   role: "Software Designer",
   schema,

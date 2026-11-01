@@ -1,6 +1,6 @@
 # Software Factory
 
-Type a prompt and get a deployed web app. Seven Claude agents (requirements, test cases, design, development, review, testing, deployment) work in a pipeline with a hard per-prompt budget, and every step leaves a record you can read.
+Type a prompt and get a deployed web app. Eight Claude agents (research, requirements, test cases, design, development, review, testing, deployment) work in a pipeline with a hard per-prompt budget, and every step leaves a record you can read.
 
 ```
 portal (prompt box) ──► factory API ──► pipeline ──► deployer ──► http://<runId>.apps.localhost
@@ -22,7 +22,8 @@ The API key is the only required setting. Everything else in `.env.example` is o
 
 | # | Agent | Works in | Produces |
 |---|---|---|---|
-| 1 | Requirements | its stage folder | user stories, acceptance criteria, non-goals |
+| 0 | Researcher | its stage folder + web search/fetch | comparable products, common features, UI patterns, pitfalls, suggested MVP scope, sources |
+| 1 | Requirements | its stage folder | user stories, acceptance criteria, non-goals (informed by the research) |
 | 2 | Test cases | its stage folder | Given/When/Then cases mapped to criteria, smoke checks |
 | 3 | Designer | its stage folder | stack, file tree, data model, API, commands, Dockerfile plan |
 | 4 | Developer | `workspace/` | the app, its tests and a Dockerfile |
@@ -30,7 +31,7 @@ The API key is the only required setting. Everything else in `.env.example` is o
 | 6 | Tester | `workspace/` (test files only) | pass/fail for each test case, smoke checks |
 | 7 | Deployer | `workspace/` + Docker tools | running container, health result |
 
-If review finds blockers or tests fail, the developer gets up to 2 fix rounds, and each round is reviewed and tested again. The agents can use any web stack that runs on the runtimes in the factory image (Node, Bun, Python, Go). Every app has to meet one contract: a single Dockerfile, listening on `$PORT`, with `GET /health` returning 200.
+Research is optional: if it fails, requirements are written from the prompt alone. If review finds blockers or tests fail, the developer gets up to 2 fix rounds, and each round is reviewed and tested again. The agents can use any web stack that runs on the runtimes in the factory image (Node, Bun, Python, Go). Every app has to meet one contract: a single Dockerfile, listening on `$PORT`, with `GET /health` returning 200.
 
 Configuration lives in `packages/factory/src/pipeline/pipeline.constants.ts`. That file sets each stage's budget, effort, turn limit and timeout. Agent prompts and output schemas are in `packages/factory/src/agents/<stage>/`.
 
@@ -50,7 +51,7 @@ The portal's **Inspect agent reports** page shows each agent's report. Everythin
 SUMMARY.md            status, stop reason, cost per stage, links to reports
 run.json  ledger.jsonl
 prompt.md
-stages/01-requirements/
+stages/01-research/  02-requirements/ …
   REPORT.md           written by the agent for people
   handoff.json        structured output passed to later agents
   input-prompt.md     exactly what the agent was asked

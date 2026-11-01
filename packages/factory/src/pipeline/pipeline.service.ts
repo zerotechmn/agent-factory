@@ -71,6 +71,11 @@ class Pipeline {
   async run(): Promise<void> {
     await this.writeRunJson("running");
 
+    // 0: research. Helpful but not essential, so a failure (search outage, bad
+    // output) only means requirements are written without it. A budget stop
+    // here still ends the run below, at requirements.
+    await this.step("research");
+
     // 1-3: specification. Without these there is nothing coherent to build.
     for (const key of ["requirements", "testCases", "design"] as const) {
       const step = await this.step(key);

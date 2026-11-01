@@ -1,4 +1,5 @@
 export const STAGE_KEYS = [
+  "research",
   "requirements",
   "testCases",
   "design",
