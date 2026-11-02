@@ -1,105 +1,130 @@
-import { useState, type FormEvent } from "react";
-import { Link, useLocation } from "wouter";
+import { IconArrowUpRight, IconPalette } from "@tabler/icons-react";
+import { useRef, useState } from "react";
+import { useLocation } from "wouter";
 
+import {
+  PromptInput,
+  PromptInputBody,
+  PromptInputFooter,
+  PromptInputSelect,
+  PromptInputSelectContent,
+  PromptInputSelectItem,
+  PromptInputSelectTrigger,
+  PromptInputSelectValue,
+  PromptInputSubmit,
+  PromptInputTextarea,
+  PromptInputTools,
+} from "@/components/ai-elements/prompt-input";
+import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion";
+import { SelectGroup, SelectLabel } from "@/components/ui/select";
+
+import { Alert } from "../../design-system";
+import { rememberRun } from "../recent-runs";
 import { DESIGN_SYSTEM_OPTIONS } from "../runs.constants";
 import { useCreateRun } from "../runs.hooks";
 import type { DesignSystem } from "../runs.types";
+import { TeamIntro } from "./team-intro";
+import { TEMPLATE_CARDS, TemplateCards } from "./template-cards";
 
-const EXAMPLES = [
-  "A habit tracker where I can add habits and tick them off each day, with a weekly streak view",
-  "A shared grocery list with categories and a 'bought' toggle",
-  "A tiny link shortener with click counts",
-];
+const MIN_PROMPT_LENGTH = 10;
+
+const DESIGN_SYSTEM_ITEMS = DESIGN_SYSTEM_OPTIONS.map(({ label, value }) => ({ label, value }));
 
 export function NewRunPage() {
   const [prompt, setPrompt] = useState("");
+  const [template, setTemplate] = useState<string | null>(null);
   const [designSystem, setDesignSystem] = useState<DesignSystem>("zt");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [, navigate] = useLocation();
   const createRun = useCreateRun();
 
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    createRun.mutate({ designSystem, prompt: prompt.trim() }, { onSuccess: ({ id }) => navigate(`/runs/${id}`) });
+  const trimmed = prompt.trim();
+
+  const pickTemplate = (value: string | null) => {
+    setTemplate(value);
+    setPrompt(TEMPLATE_CARDS.find((t) => t.label === value)?.prompt ?? "");
+    textareaRef.current?.focus();
+  };
+
+  // Resolves on success (PromptInput then clears) and rejects on failure, so the prompt stays for a retry.
+  const submit = async () => {
+    if (trimmed.length < MIN_PROMPT_LENGTH) return;
+    const { id } = await createRun.mutateAsync({ designSystem, prompt: trimmed });
+    rememberRun({ createdAt: new Date().toISOString(), id, prompt: trimmed });
+    navigate(`/runs/${id}`);
   };
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center px-4 py-12">
-      <h1 className="text-3xl font-semibold tracking-tight">Describe the app you want</h1>
-      <p className="mt-2 text-stone-600">
-        A team of AI agents will specify, design, build, review, test and deploy it. It usually takes 20–60 minutes;
-        you'll be redirected when it's live.
-      </p>
-
-      <form onSubmit={submit} className="mt-8 space-y-3">
-        <textarea
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-          rows={6}
-          maxLength={4_000}
-          placeholder="e.g. A recipe box where I can save recipes, tag them, and search by ingredient"
-          className="w-full resize-y rounded-lg border border-stone-300 bg-white p-4 shadow-sm outline-none focus:border-stone-500 focus:ring-2 focus:ring-stone-200"
-        />
-        <fieldset className="grid gap-2 sm:grid-cols-2">
-          <legend className="mb-2 text-sm font-medium text-stone-700">Design</legend>
-          {DESIGN_SYSTEM_OPTIONS.map((option) => (
-            <label
-              key={option.value}
-              className={`flex cursor-pointer gap-3 rounded-lg border bg-white p-3 text-sm ${
-                designSystem === option.value ? "border-stone-900 ring-1 ring-stone-900" : "border-stone-300"
-              }`}
-            >
-              <input
-                type="radio"
-                name="designSystem"
-                value={option.value}
-                checked={designSystem === option.value}
-                onChange={() => setDesignSystem(option.value)}
-                className="mt-0.5"
-              />
-              <span>
-                <span className="block font-medium text-stone-900">{option.label}</span>
-                <span className="text-stone-600">{option.description}</span>
-              </span>
-            </label>
-          ))}
-        </fieldset>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <span className="text-sm text-stone-500">{prompt.trim().length} / 4000</span>
-          <button
-            type="submit"
-            disabled={prompt.trim().length < 10 || createRun.isPending}
-            className="rounded-lg bg-stone-900 px-5 py-2.5 font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {createRun.isPending ? "Starting…" : "Build it"}
-          </button>
-        </div>
-        {createRun.error && (
-          <p role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
-            {createRun.error instanceof Error ? createRun.error.message : "Something went wrong"}
-          </p>
-        )}
-      </form>
-
-      <div className="mt-10">
-        <p className="text-sm font-medium text-stone-500">Try one of these</p>
-        <ul className="mt-2 space-y-2">
-          {EXAMPLES.map((example) => (
-            <li key={example}>
-              <button
-                type="button"
-                onClick={() => setPrompt(example)}
-                className="text-left text-sm text-stone-700 underline decoration-stone-300 underline-offset-4 hover:decoration-stone-600"
-              >
-                {example}
-              </button>
-            </li>
-          ))}
-        </ul>
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-3 px-4 pt-16 pb-12 md:pt-24">
+      <div className="mb-6">
+        <TemplateCards value={template} onPick={pickTemplate} />
       </div>
 
-      <Link href="/librarian" className="mt-10 inline-block text-sm text-stone-600 underline underline-offset-4 hover:text-stone-900">
-        What the factory knows →
-      </Link>
-    </main>
+      {/* A raised white composer on the page background, as in Cursor; the card tone in dark mode.
+          Focus only nudges the border and adds a faint halo, softer than the default input ring. */}
+      <PromptInput
+        onSubmit={submit}
+        className="*:data-[slot=input-group]:rounded-xl *:data-[slot=input-group]:border-border *:data-[slot=input-group]:bg-[var(--ds-white)] *:data-[slot=input-group]:shadow-[var(--ds-shadow-card)] dark:*:data-[slot=input-group]:bg-card *:data-[slot=input-group]:has-[[data-slot=input-group-control]:focus-visible]:border-ring/40 *:data-[slot=input-group]:has-[[data-slot=input-group-control]:focus-visible]:ring-ring/10"
+      >
+        <PromptInputBody>
+          <PromptInputTextarea
+            ref={textareaRef}
+            autoFocus
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            aria-label="Describe your app"
+            placeholder="Describe the app you want the factory to build"
+            className="min-h-24"
+          />
+        </PromptInputBody>
+        <PromptInputFooter>
+          <PromptInputTools>
+            <PromptInputSelect
+              items={DESIGN_SYSTEM_ITEMS}
+              value={designSystem}
+              onValueChange={(value) => value && setDesignSystem(value as DesignSystem)}
+            >
+              <PromptInputSelectTrigger aria-label="Design system" title="Design system">
+                <IconPalette />
+                <PromptInputSelectValue />
+              </PromptInputSelectTrigger>
+              <PromptInputSelectContent align="start" alignItemWithTrigger={false} className="w-80">
+                <SelectGroup>
+                  <SelectLabel>Design system</SelectLabel>
+                  {DESIGN_SYSTEM_OPTIONS.map((option) => (
+                    <PromptInputSelectItem key={option.value} value={option.value}>
+                      <span className="flex flex-col gap-0.5 whitespace-normal">
+                        <span>{option.label}</span>
+                        <span className="text-xs text-muted-foreground">{option.description}</span>
+                      </span>
+                    </PromptInputSelectItem>
+                  ))}
+                </SelectGroup>
+              </PromptInputSelectContent>
+            </PromptInputSelect>
+          </PromptInputTools>
+          <PromptInputSubmit
+            className="rounded-full"
+            disabled={trimmed.length < MIN_PROMPT_LENGTH || createRun.isPending}
+            status={createRun.isPending ? "submitted" : undefined}
+          />
+        </PromptInputFooter>
+      </PromptInput>
+
+      {createRun.error && (
+        <Alert tone="error">{createRun.error instanceof Error ? createRun.error.message : "Something went wrong"}</Alert>
+      )}
+
+      <Suggestions>
+        <Suggestion suggestion="What the factory knows" onClick={() => navigate("/librarian")}>
+          What the factory knows
+          <IconArrowUpRight data-icon="inline-end" />
+        </Suggestion>
+      </Suggestions>
+
+      <div className="mt-10">
+        <TeamIntro />
+      </div>
+    </div>
   );
 }

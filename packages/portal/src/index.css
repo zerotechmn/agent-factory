@@ -1,2 +1,372 @@
 @import "tailwindcss";
+@import "./design-system/tokens.css";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *, [data-theme="dark"] *));
 @plugin "@tailwindcss/typography";
+
+/* Cursor DS tokens as Tailwind utilities (bg-ds-card, text-ds-fg-sec, border-ds-line, …).
+   The values live on .ds-root, which wraps the whole app (see index.html). */
+@theme inline {
+  --font-sans: var(--ds-font-sans);
+  --font-mono: var(--ds-font-mono);
+  --font-serif: var(--ds-font-serif);
+
+  --color-ds-bg: var(--ds-bg);
+  --color-ds-elevated: var(--ds-bg-elevated);
+  --color-ds-hover: var(--ds-bg-hover);
+  --color-ds-fg: var(--ds-text);
+  --color-ds-fg-sec: var(--ds-text-sec);
+  --color-ds-fg-ter: var(--ds-text-tertiary);
+  --color-ds-card: var(--ds-card);
+  --color-ds-card-2: var(--ds-card-02);
+  --color-ds-card-3: var(--ds-card-03);
+  --color-ds-card-warm: var(--ds-card-warm);
+  --color-ds-card-hover: var(--ds-card-hover);
+  --color-ds-line: var(--ds-border);
+  --color-ds-line-subtle: var(--ds-border-subtle);
+  --color-ds-line-strong: var(--ds-border-strong);
+  --color-ds-accent: var(--ds-accent);
+  --color-ds-accent-soft: var(--ds-accent-bg);
+  --color-ds-success: var(--ds-success);
+  --color-ds-success-soft: var(--ds-success-bg);
+  --color-ds-error: var(--ds-error);
+  --color-ds-error-soft: var(--ds-error-bg);
+  --color-ds-warning: var(--ds-warning);
+  --color-ds-warning-soft: var(--ds-warning-bg);
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+.prose {
+  --tw-prose-body: var(--ds-text);
+  --tw-prose-headings: var(--ds-text);
+  --tw-prose-bold: var(--ds-text);
+  --tw-prose-links: var(--ds-text);
+  --tw-prose-code: var(--ds-code-text);
+  --tw-prose-quotes: var(--ds-text-sec);
+  --tw-prose-counters: var(--ds-text-sec);
+  --tw-prose-bullets: var(--ds-text-tertiary);
+  --tw-prose-hr: var(--ds-border);
+  --tw-prose-th-borders: var(--ds-border-strong);
+  --tw-prose-td-borders: var(--ds-border);
+}
+.prose :where(h1, h2, h3, h4) {
+  font-weight: var(--ds-weight-normal);
+  letter-spacing: var(--ds-tracking-md);
+}
+
+/* shadcn/ui + AI Elements theme, mapped onto the Cursor DS tokens. Declared on .ds-root (not :root)
+   because the --ds-* values live there; .ds-root.dark swaps them, so no separate dark block is needed. */
+.ds-root {
+  --background: var(--ds-bg);
+  --foreground: var(--ds-text);
+  --card: var(--ds-card);
+  --card-foreground: var(--ds-text);
+  --popover: var(--ds-bg);
+  --popover-foreground: var(--ds-text);
+  --primary: var(--ds-button-bg);
+  --primary-foreground: var(--ds-button-text);
+  --secondary: var(--ds-button-secondary-surface);
+  --secondary-foreground: var(--ds-text);
+  --muted: var(--ds-card-02);
+  --muted-foreground: var(--ds-text-sec);
+  --accent: var(--ds-bg-hover);
+  --accent-foreground: var(--ds-text);
+  --destructive: var(--ds-error);
+  --border: var(--ds-border);
+  --input: var(--ds-border-strong);
+  --ring: var(--ds-border-muted);
+  --radius: var(--ds-radius-md);
+  --sidebar: var(--ds-bg-elevated);
+  --sidebar-foreground: var(--ds-text);
+  --sidebar-primary: var(--ds-button-bg);
+  --sidebar-primary-foreground: var(--ds-button-text);
+  --sidebar-accent: var(--ds-bg-hover);
+  --sidebar-accent-foreground: var(--ds-text);
+  --sidebar-border: var(--ds-border);
+  --sidebar-ring: var(--ds-border-muted);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+/* Template cards on the new-run page: a springy rise on load, then a slow, gentle bob. */
+@keyframes template-enter {
+  from {
+    opacity: 0;
+    transform: translateY(28px) scale(0.85);
+  }
+}
+@keyframes template-float {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -7px;
+  }
+}
+
+/* Book cloth on the librarian page, after the animations.dev Motion Passport: the binding's
+   gradient (set per book through --cloth / --cloth-ink / --cloth-emboss), a paper-grain
+   noise laid over it, and lettering pressed into the cloth. */
+@layer components {
+  .cloth {
+    position: relative;
+    background: var(--cloth);
+    color: var(--cloth-ink);
+    filter: drop-shadow(0 4px 4px #0000000d) drop-shadow(0 1px 1px #0000001f);
+  }
+  .cloth::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    opacity: 0.15;
+    mix-blend-mode: overlay;
+    pointer-events: none;
+    background: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.2' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  }
+  .cloth-text {
+    text-shadow: var(--cloth-emboss);
+  }
+  /* Dark mode: a lit top edge so covers don't sink into the page. */
+  .dark .cloth {
+    box-shadow: 0 1px 0 0 #ffffff29 inset, 0 2px 3px 0 #ffffff1a inset;
+  }
+  /* A spine is rounded: light catches its left side, its right falls into shadow. */
+  .cloth-spine {
+    background:
+      linear-gradient(90deg, #0000001f 0%, #ffffff2e 18%, #ffffff0a 45%, #00000000 70%, #00000029 100%),
+      var(--cloth);
+  }
+}
+
+/* Reference modules as macOS Finder folders: a darker back panel with its tab, a sheet of
+   paper tucked inside, and the cloth-bound front flap carrying the label. On hover the
+   sheet slides a little further out, the way a full folder looks in Finder. */
+.folder {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding-top: 1.5rem;
+}
+.folder-back {
+  position: absolute;
+  inset: 0.75rem 0 0;
+  border-radius: 0 12px 12px;
+  background: var(--cloth-base);
+  filter: brightness(0.82) saturate(1.1);
+}
+.folder-back::before {
+  content: "";
+  position: absolute;
+  bottom: calc(100% - 1px);
+  left: 0;
+  width: 42%;
+  height: 0.75rem;
+  border-radius: 8px 8px 0 0;
+  background: inherit;
+  clip-path: polygon(0 0, calc(100% - 0.9rem) 0, 100% 100%, 0 100%);
+}
+.folder-paper {
+  position: absolute;
+  top: 1.1rem;
+  right: 0.75rem;
+  left: 0.75rem;
+  height: 3rem;
+  border-radius: 4px;
+  background: linear-gradient(#fdfbf6, #f1ebdf);
+  box-shadow: 0 -1px 2px #0000001a;
+  transition: translate 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.folder-front {
+  flex: 1;
+  margin-top: 0.75rem;
+  border-radius: 12px;
+  box-shadow: 0 1px 0 0 #ffffff59 inset;
+}
+@media (hover: hover) and (pointer: fine) {
+  .folder:hover .folder-paper {
+    translate: 0 -0.4rem;
+  }
+}
+
+/* Librarian shelf books, after Grokipedia's shelf. A book is a 3D box: spine face out, cover
+   hinged at the spine's right edge running back into the shelf (backface hidden). Pulling it
+   out turns the box on the spine's left edge until the cover faces you, while the slot widens
+   to the cover's width so the neighbours slide aside. Width and turn share one curve and
+   duration so they read as a single motion; putting back runs faster than pulling out. */
+.shelf-book {
+  --turn-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  position: relative;
+  width: var(--s);
+  height: var(--h);
+  perspective: 1400px;
+  transition:
+    width 320ms var(--turn-ease),
+    opacity 200ms ease-out;
+}
+/* Coming toward you, so it passes in front of its neighbours while they make room. */
+.shelf-book[data-pulled] {
+  z-index: 1;
+  width: calc(var(--c) + 0.5rem);
+  transition-duration: 460ms, 200ms;
+}
+.book-lift {
+  --lift-ease: cubic-bezier(0.23, 1, 0.32, 1);
+  position: absolute;
+  inset: 0;
+  display: block;
+  cursor: pointer;
+}
+/* On hover the book stays on the board and just the top of it comes into view: the two
+   boards in the cloth's colour framing the page block, which sits a hair below them. */
+.book-top {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  width: var(--s);
+  height: 0.5rem;
+  background: linear-gradient(
+    90deg,
+    var(--cloth-base) 0 3px,
+    transparent 3px calc(100% - 3px),
+    var(--cloth-base) calc(100% - 3px)
+  );
+  scale: 1 0;
+  transform-origin: bottom;
+  transition: scale 150ms var(--lift-ease);
+}
+/* Page edges run front to back, so from above they read as fine vertical lines,
+   lighter in the middle where the block bows toward you. */
+.book-top::before {
+  content: "";
+  position: absolute;
+  inset: 1px 3px 0;
+  background:
+    repeating-linear-gradient(90deg, #0000 0 2px, #00000008 2px 3px),
+    linear-gradient(90deg, #e4ddcd, #f4efe4 22%, #faf7f0 50%, #f1ebdf 78%, #e1d9c8);
+  box-shadow: inset 0 -3px 4px -3px #00000026;
+}
+@media (hover: hover) and (pointer: fine) {
+  .shelf-book:not([data-pulled]) .book-lift:hover .book-top {
+    scale: 1 1;
+    transition-duration: 200ms;
+  }
+}
+.shelf-book:not([data-pulled]) .book-lift:focus-visible .book-top {
+  scale: 1 1;
+}
+.book {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: var(--c);
+  height: var(--h);
+  transform-style: preserve-3d;
+  transform-origin: 0 50% 0;
+  transform: translateZ(0) rotateY(90deg);
+  transition: transform 320ms var(--turn-ease);
+  will-change: transform;
+}
+/* Turned to face out, kept 12° short of square so a sliver of spine stays visible at the hinge. */
+.shelf-book[data-pulled] .book {
+  transform: translateZ(calc(var(--s) * -1)) rotateY(12deg);
+  transition-duration: 460ms;
+}
+.book-spine {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--s);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 0 0.625rem;
+  overflow: hidden;
+  border-radius: 1px 1px 0 0;
+  transform-origin: left center;
+  transform: rotateY(-90deg);
+  backface-visibility: hidden;
+}
+/* Tucked 1.5px inside the spine's edge: faces that meet exactly leave an anti-aliased seam. */
+.book-cover {
+  position: absolute;
+  inset: 0;
+  transform: translateZ(calc(var(--s) - 1.5px));
+  backface-visibility: hidden;
+}
+.book-cover > .cloth {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+/* Caption under the shelf: the new title settles in place of the old one. */
+@keyframes shelf-caption-in {
+  from {
+    opacity: 0;
+    translate: 0 4px;
+    filter: blur(2px);
+  }
+}
+.shelf-caption {
+  animation: shelf-caption-in 200ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .shelf-book,
+  .book-lift,
+  .book-top,
+  .book,
+  .folder-paper {
+    transition: none;
+  }
+  .shelf-caption {
+    animation: none;
+  }
+}

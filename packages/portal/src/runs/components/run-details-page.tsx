@@ -3,6 +3,8 @@ import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Link } from "wouter";
 
+import { AgentAvatar } from "../../agents/components/agent-avatar";
+import { STAGE_MOODS } from "../runs.constants";
 import { useRun, useStageReport } from "../runs.hooks";
 import { formatUsd } from "../runs.utils";
 
@@ -14,9 +16,9 @@ export function RunDetailsPage({ id }: { id: string }) {
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-12">
-      <Link href={`/runs/${id}`} className="text-sm text-stone-500 hover:text-stone-800">← Back to status</Link>
-      <h1 className="mt-6 text-2xl font-semibold tracking-tight">Agent reports</h1>
-      <p className="mt-1 text-sm text-stone-600">
+      <Link href={`/runs/${id}`} className="text-sm text-ds-fg-sec transition-colors hover:text-ds-fg">← Back to status</Link>
+      <h1 className="mt-6 type-md-lg">Agent reports</h1>
+      <p className="mt-1 text-sm text-ds-fg-sec">
         What each stage produced. The PRD and Verify reports are rendered by the factory; other agents write their own.
         Machine handoffs and full transcripts are in the run folder on the factory host (<code>data/runs/{id}</code>).
       </p>
@@ -28,17 +30,20 @@ export function RunDetailsPage({ id }: { id: string }) {
               key={stage.dirName}
               type="button"
               onClick={() => setSelected(stage.dirName)}
-              className={`shrink-0 rounded-md px-3 py-2 text-left text-sm ${
-                stage.dirName === dirName ? "bg-stone-900 text-white" : "bg-white text-stone-700 hover:bg-stone-100"
+              className={`flex shrink-0 items-center gap-2.5 rounded-[var(--ds-radius-xs)] px-3 py-2 text-left text-sm ${
+                stage.dirName === dirName ? "bg-ds-fg text-ds-bg" : "bg-ds-card text-ds-fg hover:bg-ds-card-2"
               }`}
             >
-              <span className="block">{stage.label}</span>
-              <span className="text-xs opacity-70">{stage.status} · {formatUsd(stage.costUsd)}</span>
+              <AgentAvatar mood={STAGE_MOODS[stage.status]} size={20} stageKey={stage.stageKey} />
+              <span>
+                <span className="block">{stage.label}</span>
+                <span className="text-xs opacity-70">{stage.status} · {formatUsd(stage.costUsd)}</span>
+              </span>
             </button>
           ))}
         </nav>
 
-        <article className="prose prose-stone min-w-0 max-w-none rounded-lg border border-stone-200 bg-white p-6">
+        <article className="prose prose-stone min-w-0 max-w-none rounded-[var(--ds-radius-xs)] border border-ds-line bg-ds-card p-6">
           {!dirName && <p>No stages have run yet.</p>}
           {report.isLoading && <p>Loading…</p>}
           {report.error && <p>This stage has not written its report yet.</p>}

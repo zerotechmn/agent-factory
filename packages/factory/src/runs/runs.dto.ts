@@ -7,7 +7,7 @@ export const createRunSchema = z.object({
   designSystem: z.enum(DESIGN_SYSTEMS).default(DEFAULT_DESIGN_SYSTEM),
   /** false: never pause for the customer's answers (benchmark and scripted runs). */
   interactive: z.boolean().default(true),
-  prompt: z.string().trim().min(10, "Describe the app in at least 10 characters").max(4_000),
+  prompt: z.string().trim().min(10, "Describe the app in at least 10 characters"),
 });
 
 export type CreateRunInput = z.infer<typeof createRunSchema>;

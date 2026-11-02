@@ -1,0 +1,382 @@
+/**
+ * Cursor Design System tokens
+ * Extracted from cursor.com (light + dark). Scoped to .ds-root.
+ */
+
+.ds-root {
+  /* ——— Color: brand & semantic ——— */
+  --ds-bg: #f7f7f4;
+  --ds-bg-elevated: #f2f1ed;
+  --ds-bg-hover: #ebeae5;
+  --ds-fg: #26251e;
+  --ds-fg-02: #3b3a33;
+  --ds-text: #26251e;
+  --ds-text-sec: color-mix(in oklab, #26251e 60%, transparent);
+  --ds-text-tertiary: color-mix(in oklab, #26251e 40%, transparent);
+  --ds-text-mid: color-mix(in oklab, #26251e 50%, transparent);
+
+  --ds-card: #f2f1ed;
+  --ds-card-01: #f0efeb;
+  --ds-card-02: #ebeae5;
+  --ds-card-03: #e6e5e0;
+  --ds-card-warm: #f3ede6;
+  --ds-card-hover: #ebeae5;
+
+  --ds-border: color-mix(in oklab, #26251e 10%, transparent);
+  --ds-border-subtle: color-mix(in oklab, #26251e 2.5%, transparent);
+  --ds-border-strong: color-mix(in oklab, #26251e 20%, transparent);
+  --ds-border-muted: color-mix(in oklab, #26251e 60%, transparent);
+
+  --ds-accent: #f54e00;
+  --ds-accent-bg: color-mix(in srgb, #f54e00 10%, transparent);
+  --ds-accent-bg-strong: color-mix(in srgb, #f54e00 25%, transparent);
+
+  --ds-success: #1f8a65;
+  --ds-success-bg: color-mix(in srgb, #1f8a65 15%, transparent);
+  --ds-error: #cf2d56;
+  --ds-error-bg: color-mix(in srgb, #cf2d56 15%, transparent);
+  --ds-warning: #f54e00;
+  --ds-warning-bg: color-mix(in srgb, #f54e00 15%, transparent);
+  --ds-info: color-mix(in oklab, #26251e 60%, transparent);
+
+  --ds-button-bg: #26251e;
+  --ds-button-text: #f7f7f4;
+  --ds-button-hover-bg: #3b3a33;
+  --ds-button-sec-bg: transparent;
+  --ds-button-sec-border: color-mix(in oklab, #26251e 60%, transparent);
+  --ds-button-sec-text: #26251e;
+  --ds-button-secondary-surface: #e6e5e0;
+
+  --ds-code-bg: #f2f1ed;
+  --ds-code-text: #26251e;
+  --ds-white: #fff;
+  --ds-black: #000;
+
+  /* ——— Typography ———
+   * Root of .ds-root is 15px so 1rem matches cursor.com rem calculus. */
+  --ds-font-sans: "CursorGothic", "CursorGothic Fallback", system-ui, "Helvetica Neue",
+    Helvetica, Arial, sans-serif;
+  --ds-font-mono: "berkeleyMono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  --ds-font-serif: "EB Garamond", "Iowan Old Style", "Palatino Linotype", "URW Palladio L",
+    P052, ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+
+  --ds-text-xs: 0.75rem; /* 11.25px */
+  --ds-text-sm: 0.875rem; /* 13.125px */
+  --ds-text-base: 1rem; /* 15px */
+  --ds-text-md: 1.375rem; /* 20.625px — feature titles */
+  --ds-text-md-lg: 1.625rem; /* 24.375px — hero / prose lead */
+  --ds-text-lg: 2.25rem; /* 33.75px */
+  --ds-text-xl: 3.25rem; /* 48.75px */
+  --ds-text-2xl: 4.5rem; /* 67.5px */
+
+  --ds-leading-xs: 1.5;
+  --ds-leading-sm: 1.5;
+  --ds-leading-base: 1.5;
+  --ds-leading-md: 1.25;
+  --ds-leading-lg: 1.2;
+  --ds-leading-xl: 1.1;
+  --ds-leading-2xl: 1.1;
+  --ds-leading-tight: 1.1;
+  --ds-leading-xsnug: 1.2;
+  --ds-leading-snug: 1.25;
+  --ds-leading-cozy: 1.4;
+
+  --ds-tracking-xs: 0.01em;
+  --ds-tracking-sm: 0.01em;
+  --ds-tracking-base: 0.005em;
+  --ds-tracking-md: -0.005em;
+  --ds-tracking-md-lg: -0.0125em;
+  --ds-tracking-lg: -0.02em;
+  --ds-tracking-xl: -0.025em;
+  --ds-tracking-2xl: -0.03em;
+
+  --ds-weight-normal: 400;
+  --ds-weight-medium: 500;
+  --ds-weight-semibold: 600;
+  --ds-weight-bold: 700;
+
+  /* ——— Layout / spacing (g = 10rem/16 = 10px base unit) ——— */
+  --ds-g: calc(10rem / 16);
+  --ds-g0-25: calc(var(--ds-g) * 0.25);
+  --ds-g0-5: calc(var(--ds-g) * 0.5);
+  --ds-g0-75: calc(var(--ds-g) * 0.75);
+  --ds-g1: calc(var(--ds-g) * 1);
+  --ds-g1-25: calc(var(--ds-g) * 1.25);
+  --ds-g1-5: calc(var(--ds-g) * 1.5);
+  --ds-g2: calc(var(--ds-g) * 2);
+  --ds-g2-5: calc(var(--ds-g) * 2.5);
+  --ds-g3: calc(var(--ds-g) * 3);
+
+  /* Vertical rhythm (1.4 × rem) */
+  --ds-v1: calc(1rem * 1.4);
+  --ds-v1-5: calc(1rem * 1.4 * 1.5);
+  --ds-v2: calc(1rem * 1.4 * 2);
+  --ds-v2-5: calc(1rem * 1.4 * 2.5);
+  --ds-v3: calc(1rem * 1.4 * 3);
+  --ds-v4: calc(1rem * 1.4 * 4);
+  --ds-v5: calc(1rem * 1.4 * 5);
+  --ds-v6: calc(1rem * 1.4 * 6);
+
+  --ds-grid-gap: calc(12rem / 15);
+  --ds-container: 1300px;
+  --ds-header-height: 56px;
+
+  --ds-prose-narrow: 48ch;
+  --ds-prose-medium: 80ch;
+  --ds-prose-wide: 96ch;
+
+  /* Breakpoints (documented; used via media queries) */
+  --ds-bp-md: 660px;
+  --ds-bp-lg: 1024px;
+  --ds-bp-xl: 1280px;
+
+  /* ——— Radius ——— */
+  --ds-radius-2xs: 2px;
+  --ds-radius-xs: 4px;
+  --ds-radius-sm: 0.25rem;
+  --ds-radius-md: 8px;
+  --ds-radius-lg: 0.5rem;
+  --ds-radius-xl: 0.75rem;
+  --ds-radius-2xl: 1rem;
+  --ds-radius-full: 9999px;
+
+  /* ——— Elevation ——— */
+  --ds-shadow-flyout: 0 0 1rem #00000005, 0 0 0.5rem #00000002;
+  --ds-shadow-card: 0 0 15px rgba(0, 0, 0, 0.02), 0 0 7.5px rgba(0, 0, 0, 0.008);
+  --ds-shadow-outline: 0 0 0 1px color-mix(in oklab, #26251e 10%, transparent);
+  --ds-z-base: 0;
+  --ds-z-dropdown: 50;
+  --ds-z-sticky: 100;
+  --ds-z-modal: 200;
+  --ds-z-toast: 300;
+  --ds-z-tooltip: 400;
+
+  /* ——— Motion ——— */
+  --ds-duration: 0.14s;
+  --ds-duration-slow: 0.25s;
+  --ds-ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ds-ease-spring: cubic-bezier(0.25, 1, 0.5, 1);
+
+  /* ——— Button padding ——— */
+  --ds-btn-pad: 0.89em 1.45em 0.91em;
+  --ds-btn-pad-sm: 0.45em 0.8em 0.46em;
+  --ds-btn-pad-xs: 0.15em 0.5em;
+
+  color: var(--ds-text);
+  background: var(--ds-bg);
+  font-family: var(--ds-font-sans);
+  /* 15px root — matches cursor.com; keeps rem type tokens 1:1 */
+  font-size: 15px;
+  line-height: var(--ds-leading-base);
+  -webkit-font-smoothing: antialiased;
+}
+
+.ds-root.dark,
+.ds-root[data-theme="dark"] {
+  --ds-bg: #14120b;
+  --ds-bg-elevated: #1b1913;
+  --ds-bg-hover: #242119;
+  --ds-fg: #edecec;
+  --ds-fg-02: #c8c7c4;
+  --ds-text: #edecec;
+  --ds-text-sec: color-mix(in oklab, #edecec 60%, transparent);
+  --ds-text-tertiary: color-mix(in oklab, #edecec 40%, transparent);
+  --ds-text-mid: color-mix(in oklab, #edecec 50%, transparent);
+
+  --ds-card: #1b1913;
+  --ds-card-01: #1f1d17;
+  --ds-card-02: #242119;
+  --ds-card-03: #2a271f;
+  --ds-card-warm: #221e18;
+  --ds-card-hover: #242119;
+
+  --ds-border: color-mix(in oklab, #edecec 12%, transparent);
+  --ds-border-subtle: color-mix(in oklab, #edecec 4%, transparent);
+  --ds-border-strong: color-mix(in oklab, #edecec 22%, transparent);
+  --ds-border-muted: color-mix(in oklab, #edecec 50%, transparent);
+
+  --ds-button-bg: #edecec;
+  --ds-button-text: #14120b;
+  --ds-button-hover-bg: #ffffff;
+  --ds-button-sec-border: color-mix(in oklab, #edecec 50%, transparent);
+  --ds-button-sec-text: #edecec;
+  --ds-button-secondary-surface: #2a271f;
+
+  --ds-code-bg: #1b1913;
+  --ds-code-text: #edecec;
+
+  --ds-shadow-outline: 0 0 0 1px color-mix(in oklab, #edecec 12%, transparent);
+  --ds-shadow-flyout: 0 0 1rem #00000040, 0 0 0.5rem #00000020;
+  --ds-shadow-card: 0 0 15px rgba(0, 0, 0, 0.25), 0 0 7.5px rgba(0, 0, 0, 0.12);
+}
+
+.ds-root .no-scrollbar {
+  scrollbar-width: none;
+}
+.ds-root .no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Cursor `.card-border` — hairline via ::before so radius stays crisp */
+.ds-root .card-border {
+  position: relative;
+}
+.ds-root .card-border::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  border-radius: inherit;
+  border: 1px solid var(--ds-border-subtle);
+}
+
+/* ——— Type utilities (marketing scale) ——— */
+.ds-root .type-xs {
+  font-size: var(--ds-text-xs);
+  line-height: var(--ds-leading-xs);
+  letter-spacing: var(--ds-tracking-xs);
+  font-weight: var(--ds-weight-normal);
+}
+.ds-root .type-sm {
+  font-size: var(--ds-text-sm);
+  line-height: var(--ds-leading-sm);
+  letter-spacing: var(--ds-tracking-sm);
+  font-weight: var(--ds-weight-normal);
+}
+.ds-root .type-base {
+  font-size: var(--ds-text-base);
+  line-height: var(--ds-leading-base);
+  letter-spacing: var(--ds-tracking-base);
+  font-weight: var(--ds-weight-normal);
+}
+.ds-root .type-md {
+  font-size: var(--ds-text-md);
+  line-height: var(--ds-leading-snug);
+  letter-spacing: var(--ds-tracking-md);
+  font-weight: var(--ds-weight-normal);
+}
+.ds-root .type-md-lg {
+  font-size: var(--ds-text-md-lg);
+  line-height: var(--ds-leading-snug);
+  letter-spacing: var(--ds-tracking-md-lg);
+  font-weight: var(--ds-weight-normal);
+}
+.ds-root .type-lg {
+  font-size: var(--ds-text-lg);
+  line-height: var(--ds-leading-xsnug);
+  letter-spacing: var(--ds-tracking-lg);
+  font-weight: var(--ds-weight-normal);
+}
+.ds-root .type-xl {
+  font-size: var(--ds-text-xl);
+  line-height: var(--ds-leading-tight);
+  letter-spacing: var(--ds-tracking-xl);
+  font-weight: var(--ds-weight-normal);
+}
+.ds-root .type-2xl {
+  font-size: var(--ds-text-2xl);
+  line-height: var(--ds-leading-tight);
+  letter-spacing: var(--ds-tracking-2xl);
+  font-weight: var(--ds-weight-normal);
+}
+
+@media (min-width: 420px) {
+  .ds-root .sm\:type-2xl {
+    font-size: var(--ds-text-2xl);
+    line-height: var(--ds-leading-tight);
+    letter-spacing: var(--ds-tracking-2xl);
+  }
+}
+
+@media (min-width: 660px) {
+  .ds-root .type-md-lg {
+    font-size: var(--ds-text-lg);
+    line-height: var(--ds-leading-xsnug);
+    letter-spacing: var(--ds-tracking-lg);
+  }
+  .ds-root .md\:type-md {
+    font-size: var(--ds-text-md);
+    line-height: var(--ds-leading-snug);
+    letter-spacing: var(--ds-tracking-md);
+  }
+}
+
+/* ——— Section variants ——— */
+.ds-root .section {
+  padding: var(--ds-v3) var(--ds-g2);
+}
+.ds-root .section--flush-x {
+  padding-inline: 0;
+}
+.ds-root .section--flush-y {
+  padding-block: 0;
+}
+.ds-root .section--headline {
+  text-align: center;
+}
+.ds-root .section-hero {
+  padding: var(--ds-v5) var(--ds-g2) var(--ds-v3);
+}
+
+/* ——— Tertiary text CTA (Learn more →) ——— */
+.ds-root .btn-tertiary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25em;
+  font-size: var(--ds-text-base);
+  color: var(--ds-text);
+  text-decoration: none;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  padding: 0;
+  transition: opacity var(--ds-duration) var(--ds-ease-out);
+}
+.ds-root .btn-tertiary:hover {
+  opacity: 0.7;
+}
+
+/* ——— Mobile nav motion ——— */
+@keyframes ds-nav-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes ds-nav-cta-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.ds-root .nav-item-animate {
+  animation: ds-nav-item-in 0.28s var(--ds-ease-spring) both;
+}
+.ds-root .nav-cta-fade-in {
+  animation: ds-nav-cta-in 0.35s var(--ds-ease-spring) 0.12s both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-root {
+    --ds-duration: 0.01ms;
+    --ds-duration-slow: 0.01ms;
+  }
+
+  .ds-root *,
+  .ds-root *::before,
+  .ds-root *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+

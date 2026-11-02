@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 
+import { Alert, Button, Textarea } from "../../design-system";
 import { useAnswerQuestions } from "../runs.hooks";
 import type { OpenQuestions, Question } from "../runs.types";
 
@@ -27,16 +28,16 @@ export function RunQuestions({ open, runId }: { open: OpenQuestions; runId: stri
   };
 
   return (
-    <form onSubmit={submit} className="mt-6 rounded-lg border border-amber-300 bg-amber-50 p-4" aria-labelledby="questions-title">
+    <form onSubmit={submit} className="mt-6 rounded-[var(--ds-radius-xs)] border border-ds-accent/30 bg-ds-card-warm p-4" aria-labelledby="questions-title">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 id="questions-title" className="font-medium text-amber-950">
+        <h2 id="questions-title" className="text-ds-fg">
           {spec ? (open.context?.changes ? "Please confirm the changes to your app" : "Please review the spec before we build") : "A few questions before we write the spec"}
         </h2>
-        <span className="text-sm tabular-nums text-amber-900" aria-live="polite">
+        <span className="text-sm tabular-nums text-ds-accent" aria-live="polite">
           {remaining > 0 ? `Continuing on its own in ${formatSeconds(remaining)}` : "Continuing now…"}
         </span>
       </div>
-      <p className="mt-1 text-sm text-amber-900">
+      <p className="mt-1 text-sm text-ds-fg-sec">
         Our suggestion is already selected. Change what you'd like, or just use the suggestions.
       </p>
 
@@ -55,34 +56,30 @@ export function RunQuestions({ open, runId }: { open: OpenQuestions; runId: stri
         ))}
       </div>
 
-      <label className="mt-4 block text-sm font-medium text-amber-950">
-        {spec ? "Anything to add or change?" : "Anything else we should know?"}
-        <textarea
+      <div className="mt-4">
+        <Textarea
+          label={spec ? "Anything to add or change?" : "Anything else we should know?"}
           value={feedback}
-          onChange={(event) => setFeedback(event.target.value)}
+          onValueChange={setFeedback}
           rows={3}
           maxLength={2_000}
-          className="mt-1 w-full resize-y rounded-md border border-amber-300 bg-white p-2 font-normal text-stone-900 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-200"
+          fieldSize="sm"
+          className="min-h-0 resize-y bg-ds-card"
         />
-      </label>
+      </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        <button type="submit" disabled={answer.isPending} className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-40">
+        <Button type="submit" size="sm" loading={answer.isPending}>
           {answer.isPending ? "Sending…" : "Send answers"}
-        </button>
-        <button
-          type="button"
-          disabled={answer.isPending}
-          onClick={(event) => submit(event, true)}
-          className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm font-medium text-stone-800 disabled:opacity-40"
-        >
+        </Button>
+        <Button variant="ghost" size="sm" disabled={answer.isPending} onClick={(event) => submit(event, true)}>
           {spec ? "Approve as is" : "Use the suggestions"}
-        </button>
+        </Button>
       </div>
       {answer.error && (
-        <p role="alert" className="mt-3 rounded-md bg-red-50 p-2 text-sm text-red-700">
+        <Alert tone="error" className="mt-3">
           {answer.error instanceof Error ? answer.error.message : "Could not send your answers"}
-        </p>
+        </Alert>
       )}
     </form>
   );
@@ -102,22 +99,22 @@ function QuestionField({
   question: Question;
 }) {
   return (
-    <fieldset className="rounded-md bg-white p-3 ring-1 ring-amber-200">
+    <fieldset className="rounded-[var(--ds-radius-xs)] bg-ds-card p-3 ring-1 ring-ds-line">
       <legend className="sr-only">{question.question}</legend>
-      <p className="text-sm font-medium text-stone-900">{question.question}</p>
-      {question.why && <p className="mt-0.5 text-xs text-stone-500">{question.why}</p>}
+      <p className="text-sm text-ds-fg">{question.question}</p>
+      {question.why && <p className="mt-0.5 text-xs text-ds-fg-sec">{question.why}</p>}
       <div className="mt-2 space-y-1.5">
         {question.options.map((option) => (
-          <label key={option} className="flex items-start gap-2 text-sm text-stone-800">
-            <input type="radio" name={question.id} checked={choice === option} onChange={() => onChoice(option)} className="mt-1" />
+          <label key={option} className="flex items-start gap-2 text-sm text-ds-fg">
+            <input type="radio" name={question.id} checked={choice === option} onChange={() => onChoice(option)} className="mt-1 accent-[var(--ds-button-bg)]" />
             <span>
               {option}
-              {option === question.default && <span className="ml-1.5 text-xs text-stone-500">(suggested)</span>}
+              {option === question.default && <span className="ml-1.5 text-xs text-ds-fg-sec">(suggested)</span>}
             </span>
           </label>
         ))}
-        <label className="flex items-center gap-2 text-sm text-stone-800">
-          <input type="radio" name={question.id} checked={choice === OTHER} onChange={() => onChoice(OTHER)} />
+        <label className="flex items-center gap-2 text-sm text-ds-fg">
+          <input type="radio" name={question.id} checked={choice === OTHER} onChange={() => onChoice(OTHER)} className="accent-[var(--ds-button-bg)]" />
           <span className="shrink-0">Other:</span>
           <input
             type="text"
@@ -126,7 +123,7 @@ function QuestionField({
             onFocus={() => onChoice(OTHER)}
             onChange={(event) => onOther(event.target.value)}
             aria-label={`Other answer to: ${question.question}`}
-            className="min-w-0 flex-1 rounded border border-stone-300 px-2 py-1 text-sm outline-none focus:border-stone-500"
+            className="min-w-0 flex-1 rounded-[var(--ds-radius-xs)] border border-ds-line bg-ds-bg px-2 py-1 text-sm outline-none placeholder:text-ds-fg-ter focus:border-ds-line-strong"
           />
         </label>
       </div>
@@ -137,16 +134,16 @@ function QuestionField({
 function SpecSummary({ context }: { context: NonNullable<OpenQuestions["context"]> }) {
   if (context.changes) {
     return (
-      <div className="mt-4 rounded-md bg-white p-3 text-sm ring-1 ring-amber-200">
-        <p className="font-medium text-stone-900">What will change</p>
-        <ul className="mt-1 list-disc space-y-0.5 pl-5 text-stone-700">
+      <div className="mt-4 rounded-[var(--ds-radius-xs)] bg-ds-card p-3 text-sm ring-1 ring-ds-line">
+        <p className="text-ds-fg">What will change</p>
+        <ul className="mt-1 list-disc space-y-0.5 pl-5 text-ds-fg">
           {context.changes.length ? context.changes.map((c) => <li key={c}>{c}</li>) : <li>No spec items change; the update is to how existing parts work.</li>}
         </ul>
       </div>
     );
   }
   return (
-    <div className="mt-4 grid gap-3 rounded-md bg-white p-3 text-sm ring-1 ring-amber-200 sm:grid-cols-3">
+    <div className="mt-4 grid gap-3 rounded-[var(--ds-radius-xs)] bg-ds-card p-3 text-sm ring-1 ring-ds-line sm:grid-cols-3">
       <SpecList title="Features" items={context.features.map((f) => `${f.id} ${f.name}`)} />
       <SpecList title="Screens" items={context.screens.map((s) => `${s.id} ${s.name}`)} />
       <SpecList title="Roles" items={context.roles} />
@@ -157,8 +154,8 @@ function SpecSummary({ context }: { context: NonNullable<OpenQuestions["context"
 function SpecList({ items, title }: { items: string[]; title: string }) {
   return (
     <div className="min-w-0">
-      <p className="font-medium text-stone-900">{title}</p>
-      <ul className="mt-1 space-y-0.5 text-stone-700">
+      <p className="text-ds-fg">{title}</p>
+      <ul className="mt-1 space-y-0.5 text-ds-fg">
         {items.map((item) => (
           <li key={item} className="truncate" title={item}>
             {item}

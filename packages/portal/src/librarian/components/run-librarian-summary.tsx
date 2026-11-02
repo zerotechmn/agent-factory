@@ -10,8 +10,8 @@ export function RunLibrarianSummary({ id, live }: { id: string; live: boolean })
   const totals = runTotals(data);
   if (totals.asked + totals.handed === 0 && data.lessonsLearned.length === 0) return null;
   return (
-    <Link href={`/runs/${id}/librarian`} className="mt-6 block rounded-lg border border-stone-200 bg-white p-4 hover:border-stone-400">
-      <div className="flex flex-wrap justify-between gap-2 text-sm text-stone-600">
+    <Link href={`/runs/${id}/librarian`} className="mt-6 block rounded-[var(--ds-radius-xs)] border border-ds-line bg-ds-card p-4 transition-colors hover:bg-ds-card-hover">
+      <div className="flex flex-wrap justify-between gap-2 text-sm text-ds-fg-sec">
         <span>Library</span>
         <span className="tabular-nums">
           {plural(totals.asked, "lookup")} · {totals.handed} handed over
