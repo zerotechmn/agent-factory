@@ -11,6 +11,10 @@ export async function getRun(id: string) {
   return respond(async () => RunsService.getRunDetail(id));
 }
 
+export async function getBoard(id: string) {
+  return respond(async () => RunsService.getBoard(id));
+}
+
 export async function getStageReport(id: string, dirName: string) {
   return respond(async () => RunsService.getStageReport(id, dirName));
 }

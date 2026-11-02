@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
 
-import { PLANNED_STAGES, REDIRECT_DELAY_MS, RUN_STATUS_LABELS, STAGE_STATUS_ICONS } from "../runs.constants";
-import { useRun } from "../runs.hooks";
+import { BOARD_COLUMNS, PLANNED_STAGES, REDIRECT_DELAY_MS, RUN_STATUS_LABELS, STAGE_STATUS_ICONS, TERMINAL_STATUSES } from "../runs.constants";
+import { useBoard, useRun } from "../runs.hooks";
 import type { Run, Stage } from "../runs.types";
 import { formatUsd, percentOf } from "../runs.utils";
 
@@ -30,9 +30,10 @@ export function RunStatusPage({ id }: { id: string }) {
     <Shell>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-2xl font-semibold tracking-tight">{RUN_STATUS_LABELS[run.status]}</h1>
-        <Link href={`/runs/${run.id}/details`} className="text-sm text-stone-600 underline underline-offset-4">
-          Inspect agent reports
-        </Link>
+        <span className="flex gap-4 text-sm">
+          <Link href={`/runs/${run.id}/board`} className="text-stone-600 underline underline-offset-4">Task board</Link>
+          <Link href={`/runs/${run.id}/details`} className="text-stone-600 underline underline-offset-4">Agent reports</Link>
+        </span>
       </div>
       <p className="mt-2 line-clamp-3 text-stone-600">{run.prompt}</p>
 
@@ -45,6 +46,7 @@ export function RunStatusPage({ id }: { id: string }) {
       )}
 
       <BudgetBar run={run} />
+      <BoardSummary run={run} />
       <StageList run={run} />
     </Shell>
   );
@@ -84,6 +86,35 @@ function BudgetBar({ run }: { run: Run }) {
         <div className="h-full bg-stone-800 transition-all" style={{ width: `${percentOf(run.costUsd, run.budgetUsd)}%` }} />
       </div>
     </div>
+  );
+}
+
+/** Cards per column as one stacked bar; the full board is a click away. */
+function BoardSummary({ run }: { run: Run }) {
+  const { data: board } = useBoard(run.id, { live: !TERMINAL_STATUSES.includes(run.status) });
+  const total = board?.cards.length ?? 0;
+  if (!board || total === 0) return null;
+  return (
+    <Link href={`/runs/${run.id}/board`} className="mt-6 block rounded-lg border border-stone-200 bg-white p-4 hover:border-stone-400">
+      <div className="flex justify-between text-sm text-stone-600">
+        <span>Tasks</span>
+        <span className="tabular-nums">{board.cards.filter((c) => c.column === "verified").length} of {total} verified</span>
+      </div>
+      <div className="mt-2 flex h-2 overflow-hidden rounded-full bg-stone-200">
+        {BOARD_COLUMNS.map((column) => {
+          const count = board.cards.filter((c) => c.column === column.value).length;
+          return count ? <div key={column.value} className={`${column.tone} transition-all`} style={{ width: `${percentOf(count, total)}%` }} /> : null;
+        })}
+      </div>
+      <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-600">
+        {BOARD_COLUMNS.map((column) => (
+          <li key={column.value} className="flex items-center gap-1.5">
+            <span className={`size-2 rounded-full ${column.tone}`} />
+            {column.label} <span className="tabular-nums">{board.cards.filter((c) => c.column === column.value).length}</span>
+          </li>
+        ))}
+      </ul>
+    </Link>
   );
 }
 

@@ -27,7 +27,7 @@ async function gateWith(runId: string, commands: { install: string; test: string
   const paths = runPaths(dataDir, runId);
   await initRunDir(paths, "fixture");
   const sp = stagePaths(paths, 1, "verify");
-  const result = await runGate({ appPort: 8080, commands, mode: "full", paths, runId, smokeChecks: [], stagePaths: sp });
+  const result = await runGate({ appPort: 8080, commands, mode: "full", paths, runId, smokeChecks: [], stagePaths: sp, uiCheckMobile: true, uiScreens: [] });
   return { result, sp };
 }
 

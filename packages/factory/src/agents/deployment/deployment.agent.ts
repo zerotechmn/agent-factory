@@ -27,7 +27,7 @@ Report deployed=true only if /health returned 200. The public URL will be ${ctx.
 
 ${jsonBlock("Verify gate failure", { failedSteps: ctx.gate?.failedSteps, logs: ctx.gate?.logs, smokeFailures: ctx.gate?.smoke.filter((s) => !s.ok) })}
 
-${jsonBlock("Design", ctx.handoffs.design)}`,
+${jsonBlock("Architecture", ctx.handoffs.architecture)}`,
   cwd: (ctx) => ctx.workspaceDir,
   mcpServers: (ctx) => ({ deployer: deploymentMcpServer(ctx.runId) }),
   role: "Deployment Engineer",

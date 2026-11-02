@@ -1,9 +1,5 @@
-import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
-
-import { config } from "../lib/config";
-import type { RunStatus, StageKey, StageStatus } from "../pipeline/pipeline.types";
+import { db } from "../lib/db";
+import { DEFAULT_DESIGN_SYSTEM, type DesignSystem, type RunStatus, type StageKey, type StageStatus } from "../pipeline/pipeline.types";
 
 export type RunRow = {
   appUrl: string | null;
@@ -11,6 +7,7 @@ export type RunRow = {
   costUsd: number;
   createdAt: string;
   currentStage: string | null;
+  designSystem: DesignSystem;
   id: string;
   prompt: string;
   status: RunStatus;
@@ -29,10 +26,6 @@ export type StageRow = {
   startedAt: string;
   status: StageStatus;
 };
-
-mkdirSync(config.DATA_DIR, { recursive: true });
-const db = new Database(join(config.DATA_DIR, "factory.sqlite"), { create: true });
-db.exec("PRAGMA journal_mode = WAL;");
 
 // Money is stored as integer micro-dollars: SQLite has no decimal type and
 // float columns drift when summed.
@@ -67,6 +60,14 @@ db.exec(`
   );
 `);
 
+// Columns added after the first release; ALTER is idempotent via the check.
+const runColumns = new Set(db.query<{ name: string }, []>("PRAGMA table_info(runs)").all().map((c) => c.name));
+if (!runColumns.has("design_system")) {
+  db.exec(`ALTER TABLE runs ADD COLUMN design_system TEXT NOT NULL DEFAULT '${DEFAULT_DESIGN_SYSTEM}'`);
+  // Runs from before design systems existed all used the custom-design path.
+  db.exec(`UPDATE runs SET design_system = 'custom'`);
+}
+
 const now = () => new Date().toISOString();
 const toMicro = (usd: number) => Math.round(Math.max(Number(usd ?? 0), 0) * 1_000_000);
 const fromMicro = (micro: number) => Number(micro ?? 0) / 1_000_000;
@@ -77,6 +78,7 @@ type RawRun = {
   cost_micro_usd: number;
   created_at: string;
   current_stage: string | null;
+  design_system: DesignSystem;
   id: string;
   prompt: string;
   status: RunStatus;
@@ -91,6 +93,7 @@ function mapRun(row: RawRun): RunRow {
     costUsd: fromMicro(row.cost_micro_usd),
     createdAt: row.created_at,
     currentStage: row.current_stage,
+    designSystem: row.design_system,
     id: row.id,
     prompt: row.prompt,
     status: row.status,
@@ -99,12 +102,24 @@ function mapRun(row: RawRun): RunRow {
   };
 }
 
-export function insertRun({ budgetUsd, id, ip, prompt }: { budgetUsd: number; id: string; ip: string; prompt: string }) {
+export function insertRun({
+  budgetUsd,
+  designSystem,
+  id,
+  ip,
+  prompt,
+}: {
+  budgetUsd: number;
+  designSystem: DesignSystem;
+  id: string;
+  ip: string;
+  prompt: string;
+}) {
   const ts = now();
   db.query(
-    `INSERT INTO runs (id, prompt, ip, status, budget_micro_usd, created_at, updated_at)
-     VALUES (?, ?, ?, 'queued', ?, ?, ?)`,
-  ).run(id, prompt, ip, toMicro(budgetUsd), ts, ts);
+    `INSERT INTO runs (id, prompt, ip, status, budget_micro_usd, design_system, created_at, updated_at)
+     VALUES (?, ?, ?, 'queued', ?, ?, ?, ?)`,
+  ).run(id, prompt, ip, toMicro(budgetUsd), designSystem, ts, ts);
 }
 
 export function getRun(id: string): RunRow | null {

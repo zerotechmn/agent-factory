@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { renderPrd } from "./requirements.report";
 import { prdSchema, type Prd } from "./requirements.schema";
-import { prdForDesign, prdForReview, prdForTestCases } from "./requirements.utils";
+import { prdForArchitecture, prdForReview, prdForTestCases, prdForUiDesign } from "./requirements.utils";
 import { validatePrd } from "./requirements.validate";
 
 // The worked example from "PRD Template v2 (Feature + Screen)": order approval.
@@ -201,7 +201,9 @@ describe("PRD slices", () => {
   test("downstream agents get only their parts of the PRD", () => {
     const prd = examplePrd();
     expect(Object.keys(prdForTestCases(prd))).not.toContain("entities");
-    expect(Object.keys(prdForDesign(prd))).not.toContain("businessRules");
+    expect(Object.keys(prdForArchitecture(prd))).not.toContain("businessRules");
+    expect(Object.keys(prdForUiDesign(prd))).not.toContain("entities");
+    expect(prdForArchitecture(prd).screens[0]).not.toHaveProperty("states");
     expect(Object.keys(prdForReview(prd))).not.toContain("screens");
     expect(JSON.stringify(prdForReview(prd)).length).toBeLessThan(JSON.stringify(prd).length);
   });

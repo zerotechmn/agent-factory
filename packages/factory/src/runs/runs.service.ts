@@ -1,3 +1,4 @@
+import * as BoardService from "../board/board.service";
 import { config } from "../lib/config";
 import { NotFoundError, TooManyRequestsError, ValidationError } from "../lib/errors";
 import { readStageReport, runPaths } from "../pipeline/pipeline.artifacts";
@@ -20,7 +21,13 @@ export async function createRun({ body, ip }: { body: unknown; ip: string }) {
   }
 
   const id = newRunId();
-  RunsStore.insertRun({ budgetUsd: config.RUN_BUDGET_USD, id, ip, prompt: parsed.data.prompt });
+  RunsStore.insertRun({
+    budgetUsd: config.RUN_BUDGET_USD,
+    designSystem: parsed.data.designSystem,
+    id,
+    ip,
+    prompt: parsed.data.prompt,
+  });
   void drainQueue();
   return { id };
 }
@@ -34,6 +41,7 @@ export function getRunDetail(id: string) {
     costUsd: run.costUsd,
     createdAt: run.createdAt,
     currentStage: run.currentStage,
+    designSystem: run.designSystem,
     id: run.id,
     prompt: run.prompt,
     queuePosition,
@@ -41,6 +49,11 @@ export function getRunDetail(id: string) {
     status: run.status,
     stopReason: run.stopReason,
   };
+}
+
+export async function getBoard(id: string) {
+  const run = findRun(id);
+  return BoardService.getBoard(run.id);
 }
 
 export async function getStageReport(id: string, dirName: string) {
@@ -69,7 +82,7 @@ async function drainQueue() {
       if (!run) break;
       console.info("[runs] starting run", { id: run.id });
       // Fire and forget: the run records its own terminal state.
-      void executeRun({ id: run.id, prompt: run.prompt }).finally(() => void drainQueue());
+      void executeRun({ designSystem: run.designSystem, id: run.id, prompt: run.prompt }).finally(() => void drainQueue());
     }
   } finally {
     draining = false;

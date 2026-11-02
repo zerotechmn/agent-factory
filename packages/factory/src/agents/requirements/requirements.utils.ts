@@ -16,8 +16,8 @@ export function prdForTestCases(prd: Prd) {
   };
 }
 
-/** Designer: the shape of the system, not the behavioural detail. */
-export function prdForDesign(prd: Prd) {
+/** Architect: the shape of the system, not the behavioural or visual detail. */
+export function prdForArchitecture(prd: Prd) {
   return {
     constraints: prd.constraints,
     entities: prd.entities,
@@ -25,8 +25,20 @@ export function prdForDesign(prd: Prd) {
     nonFunctional: prd.nonFunctional,
     notifications: prd.notifications,
     objective: prd.objective,
-    referenceSystems: prd.referenceSystems,
     reports: prd.reports,
+    roles: prd.roles,
+    screens: prd.screens.map(({ actions, featureIds, fields, id, name }) => ({ actions, featureIds, fields, id, name })),
+    title: prd.title,
+  };
+}
+
+/** UI/UX designer: who uses which screens, and everything a screen shows or does. */
+export function prdForUiDesign(prd: Prd) {
+  return {
+    features: prd.features.map(({ description, id, name, userFlow }) => ({ description, id, name, userFlow })),
+    nonFunctional: prd.nonFunctional,
+    objective: prd.objective,
+    referenceSystems: prd.referenceSystems,
     roles: prd.roles,
     screens: prd.screens,
     title: prd.title,

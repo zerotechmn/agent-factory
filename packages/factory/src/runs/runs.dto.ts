@@ -1,6 +1,9 @@
 import { z } from "zod";
 
+import { DEFAULT_DESIGN_SYSTEM, DESIGN_SYSTEMS } from "../pipeline/pipeline.types";
+
 export const createRunSchema = z.object({
+  designSystem: z.enum(DESIGN_SYSTEMS).default(DEFAULT_DESIGN_SYSTEM),
   prompt: z.string().trim().min(10, "Describe the app in at least 10 characters").max(4_000),
 });
 

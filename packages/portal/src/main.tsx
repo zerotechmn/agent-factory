@@ -5,6 +5,7 @@ import { Route, Switch } from "wouter";
 
 import "./index.css";
 import { NewRunPage } from "./runs/components/new-run-page";
+import { RunBoardPage } from "./runs/components/run-board-page";
 import { RunDetailsPage } from "./runs/components/run-details-page";
 import { RunStatusPage } from "./runs/components/run-status-page";
 
@@ -16,6 +17,7 @@ createRoot(document.getElementById("root")!).render(
       <Switch>
         <Route path="/" component={NewRunPage} />
         <Route path="/runs/:id">{(params) => <RunStatusPage id={params.id} />}</Route>
+        <Route path="/runs/:id/board">{(params) => <RunBoardPage id={params.id} />}</Route>
         <Route path="/runs/:id/details">{(params) => <RunDetailsPage id={params.id} />}</Route>
       </Switch>
     </QueryClientProvider>

@@ -1,9 +1,12 @@
-import { writeFile } from "node:fs/promises";
+import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
-import { AGENTS } from "../agents/agents.registry";
+import { agentFor } from "../agents/agents.registry";
 import { asPrd } from "../agents/requirements/requirements.utils";
 import { validatePrd } from "../agents/requirements/requirements.validate";
 import { systemPromptFor, type StageContext } from "../agents/agents.shared";
+import * as BoardService from "../board/board.service";
 import { config } from "../lib/config";
 import { callDeployer } from "../lib/deployer";
 import * as RunsStore from "../runs/runs.store";
@@ -26,12 +29,14 @@ import {
   FIX_SKILLS,
   MAX_FIX_ATTEMPTS,
   PRD_REPAIR_BUDGET_USD,
+  skillsFor,
   STAGE_SETTINGS,
   VERIFY_LABEL,
 } from "./pipeline.constants";
 import { runGate, type GateMode, type GateResult, type SmokeCheck } from "./pipeline.gate";
 import { runStage, type StageOutcome } from "./pipeline.stage-runner";
-import type { AgentStageKey, RunStatus } from "./pipeline.types";
+import { shouldCheckMobile, uiScreensFrom } from "./pipeline.ui-check";
+import type { AgentStageKey, DesignSystem, RunStatus } from "./pipeline.types";
 
 type StepOutcome = StageOutcome | "not_started";
 type StepResult = { handoff: unknown; outcome: StepOutcome; sessionId: string | null };
@@ -58,9 +63,17 @@ const WORKSPACE_STAGES = new Set<AgentStageKey>(["development", "testing", "depl
  * Runs the whole factory for one prompt. Never throws: every outcome ends in
  * a terminal run status plus SUMMARY.md, so a failed run is still inspectable.
  */
-export async function executeRun({ id, prompt }: { id: string; prompt: string }): Promise<void> {
+export async function executeRun({
+  designSystem,
+  id,
+  prompt,
+}: {
+  designSystem: DesignSystem;
+  id: string;
+  prompt: string;
+}): Promise<void> {
   const paths = runPaths(config.DATA_DIR, id);
-  const pipeline = new Pipeline(id, prompt, paths);
+  const pipeline = new Pipeline(id, prompt, paths, designSystem);
   try {
     await initRunDir(paths, prompt);
     await pipeline.run();
@@ -88,6 +101,7 @@ class Pipeline {
     private readonly id: string,
     private readonly prompt: string,
     private readonly paths: RunPaths,
+    private readonly designSystem: DesignSystem,
   ) {
     this.budget = createBudget({ capUsd: config.RUN_BUDGET_USD, deployReserveUsd: DEPLOY_RESERVE_USD });
     const port = config.PUBLIC_HTTP_PORT === 80 ? "" : `:${config.PUBLIC_HTTP_PORT}`;
@@ -106,10 +120,16 @@ class Pipeline {
     if (requirements.outcome !== "succeeded") return this.stop(requirements, "Requirements failed");
     await this.repairPrd(requirements.sessionId);
 
-    // Both depend only on the requirements, so they run side by side.
-    const [testCases, design] = await Promise.all([this.step("testCases"), this.step("design")]);
+    // All three depend only on the PRD, so they run side by side. The UI/UX
+    // design is valuable but not essential: without it the developer still
+    // has the PRD's screens and the frontend-design skill.
+    const [testCases, architecture] = await Promise.all([
+      this.step("testCases"),
+      this.step("architecture"),
+      this.step("uiDesign"),
+    ]);
     if (testCases.outcome !== "succeeded") return this.stop(testCases, "Test cases failed");
-    if (design.outcome !== "succeeded") return this.stop(design, "Design failed");
+    if (architecture.outcome !== "succeeded") return this.stop(architecture, "Architecture failed");
 
     const dev = await this.step("development");
     this.devSessionId = dev.sessionId;
@@ -197,7 +217,11 @@ class Pipeline {
       }
 
       const needsDevFix =
-        reviewBlocking || gate.failedSteps.includes("smoke") || triageFailed || (triage?.appBugs.length ?? 0) > 0;
+        reviewBlocking ||
+        gate.failedSteps.includes("smoke") ||
+        gate.failedSteps.includes("ui") ||
+        triageFailed ||
+        (triage?.appBugs.length ?? 0) > 0;
       if (!needsDevFix) continue;
 
       const fix = await this.step("development", {
@@ -246,19 +270,26 @@ class Pipeline {
     const commit = await headCommit(this.paths);
 
     const dev = this.handoffs.development as { commands?: Commands } | undefined;
-    const design = this.handoffs.design as { commands?: Commands } | undefined;
+    const architecture = this.handoffs.architecture as { commands?: Commands } | undefined;
     const testPlan = this.handoffs.testCases as { smokeChecks?: SmokeCheck[] } | undefined;
     const gate = await runGate({
       appPort: APP_PORT,
-      // The developer reports the commands it actually verified; the design's are a fallback.
-      commands: dev?.commands ?? design?.commands ?? null,
+      // The developer reports the commands it actually verified; the architecture's are a fallback.
+      commands: dev?.commands ?? architecture?.commands ?? null,
       mode,
       paths: this.paths,
       runId: this.id,
       smokeChecks: testPlan?.smokeChecks ?? [],
       stagePaths: sp,
+      uiCheckMobile: this.checkMobile(),
+      uiScreens: uiScreensFrom(this.handoffs.development),
     });
     if (gate.containerOk) this.deployedCommit = commit;
+    await BoardService.safely("verify", async () => {
+      const testLog = mode === "full" ? await readFile(join(sp.dir, "tests.log"), "utf8").catch(() => "") : "";
+      const testsWritten = (this.handoffs.development as { testsWritten?: string[] } | undefined)?.testsWritten ?? [];
+      BoardService.onVerify(this.id, { gate, testLog, testsWritten }, { actor: label });
+    });
 
     await appendLedger(this.paths, {
       cacheCreationInputTokens: 0,
@@ -315,6 +346,8 @@ class Pipeline {
       allowanceUsd: decision.allowanceUsd,
       appPort: APP_PORT,
       appUrl: this.appUrl,
+      checkMobile: this.checkMobile(),
+      designSystem: this.designSystem,
       fix: options.fix ?? null,
       gate: options.gate ?? null,
       handoffs: this.handoffs,
@@ -323,10 +356,11 @@ class Pipeline {
       resumed: false,
       runId: this.id,
       stageDir: sp.dir,
+      stageLabel: label,
       userPrompt: this.prompt,
       workspaceDir: this.paths.workspace,
     };
-    const agent = AGENTS[stageKey];
+    const agent = agentFor(stageKey, this.designSystem);
     const resuming = Boolean(options.resumeSessionId);
     const promptFor = (resumed: boolean) => agent.buildPrompt({ ...ctx, resumed });
 
@@ -337,16 +371,17 @@ class Pipeline {
       freshPrompt: promptFor(false),
       mcpServers: agent.mcpServers?.(ctx),
       model: config.FACTORY_MODEL ?? settings.model,
+      onMessage: stageKey === "development" ? this.boardObserver(label) : undefined,
       prompt: promptFor(resuming),
       renderReport: agent.renderReport,
       resumeSessionId: options.resumeSessionId ?? null,
       runtime: agent.runtime,
       schema: agent.schema,
       settings,
-      skills: options.skills ?? settings.skills,
+      skills: skillsFor(stageKey, this.designSystem, options.skills ?? settings.skills),
       stageKey,
       stagePaths: sp,
-      systemPrompt: systemPromptFor(agent.role, ctx),
+      systemPrompt: systemPromptFor(agent.role, ctx, agent.runtime),
     });
 
     this.budget = recordSpend(this.budget, result.ledger, { releaseUsd: decision.allowanceUsd });
@@ -359,7 +394,10 @@ class Pipeline {
     RunsStore.updateRun(this.id, { costUsd: this.budget.spentUsd });
     if (WORKSPACE_STAGES.has(stageKey)) await commitWorkspace(this.paths, `${sp.dirName}: ${label}`);
 
-    if (result.outcome === "succeeded") this.handoffs[stageKey] = result.handoff;
+    if (result.outcome === "succeeded") {
+      this.handoffs[stageKey] = result.handoff;
+      await this.updateBoard(stageKey, label, result.handoff);
+    }
     if (result.outcome === "stopped_budget") this.stopReason ??= `${label}: ${result.error}`;
     this.markRunning(label, false);
     console.info("[pipeline] stage done", {
@@ -381,6 +419,35 @@ class Pipeline {
     } catch {
       return false;
     }
+  }
+
+  /** Moves board cards from a finished stage's handoff. */
+  private async updateBoard(stageKey: AgentStageKey, label: string, handoff: unknown): Promise<void> {
+    await BoardService.safely(stageKey, () => {
+      const stamp = { actor: label };
+      if (stageKey === "requirements") BoardService.onRequirements(this.id, handoff, stamp);
+      if (stageKey === "testCases") BoardService.onTestPlan(this.id, handoff, this.handoffs.requirements, stamp);
+      if (stageKey === "development") BoardService.onDevelopmentDone(this.id, handoff, stamp);
+    });
+  }
+
+  private boardObserver(label: string): (message: SDKMessage) => void {
+    const observe = BoardService.developerObserver(this.id, { actor: label });
+    return (message) => {
+      try {
+        observe(message);
+      } catch (error) {
+        console.error("[board] observer failed", { message: error instanceof Error ? error.message : String(error) });
+      }
+    };
+  }
+
+  private checkMobile(): boolean {
+    return shouldCheckMobile({
+      designSystem: this.designSystem,
+      prd: this.handoffs.requirements,
+      uiDesign: this.handoffs.uiDesign,
+    });
   }
 
   private markRunning(label: string, on: boolean): void {

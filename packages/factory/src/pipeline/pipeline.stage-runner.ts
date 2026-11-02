@@ -23,6 +23,8 @@ export type RunStageInput<Schema extends z.ZodObject> = {
   cwd: string;
   mcpServers?: Record<string, McpSdkServerConfigWithInstance>;
   model: string;
+  /** Sees every SDK message as it arrives (live task board). Must not throw. */
+  onMessage?: (message: SDKMessage) => void;
   prompt: string;
   /** Renders REPORT.md from the handoff instead of asking the agent for prose. */
   renderReport?: (handoff: unknown) => string;
@@ -81,11 +83,18 @@ export async function runStage<Schema extends z.ZodObject>(
   let sessionId: string | null = null;
   let resumeFellBack = false;
 
-  type Attempt = { result: ResultMessage | null; sawAssistant: boolean; thrown: string | null };
+  type Attempt = {
+    /** Structured output the SDK confirmed ("provided successfully"), even if the run was stopped afterwards. */
+    accepted: unknown;
+    result: ResultMessage | null;
+    sawAssistant: boolean;
+    thrown: string | null;
+  };
   const consume = async (resume: string | null): Promise<Attempt> => {
     let result: ResultMessage | null = null;
     let thrown: string | null = null;
     let sawAssistant = false;
+    const output = new StructuredOutputTracker();
     try {
       const stream = query({
         options: {
@@ -118,6 +127,8 @@ export async function runStage<Schema extends z.ZodObject>(
         await appendJsonl(stagePaths.transcript, message);
         usage.observe(message);
         if ("session_id" in message && typeof message.session_id === "string") sessionId = message.session_id;
+        output.observe(message);
+        input.onMessage?.(message);
         if (message.type === "assistant") sawAssistant = true;
         if (message.type === "result") result = message;
       }
@@ -128,7 +139,7 @@ export async function runStage<Schema extends z.ZodObject>(
           ? error.message
           : String(error);
     }
-    return { result, sawAssistant, thrown };
+    return { accepted: output.accepted, result, sawAssistant, thrown };
   };
 
   let attempt: Attempt;
@@ -146,7 +157,7 @@ export async function runStage<Schema extends z.ZodObject>(
   } finally {
     clearTimeout(timeout);
   }
-  const { result, thrown } = attempt;
+  const { accepted, result, thrown } = attempt;
 
   const ledger: LedgerEntry = {
     ...usage.totals(result),
@@ -157,9 +168,11 @@ export async function runStage<Schema extends z.ZodObject>(
     timestamp: new Date().toISOString(),
   };
 
+  let salvagedAfterBudgetStop = false;
   const finish = async (outcome: StageOutcome, handoff: z.infer<Schema> | null, error: string | null) => {
     await writeJson(stagePaths.meta, {
       ...baseMeta,
+      salvagedAfterBudgetStop,
       costUsd: ledger.costUsd,
       durationMs: ledger.durationMs,
       error,
@@ -177,7 +190,30 @@ export async function runStage<Schema extends z.ZodObject>(
     return { error, handoff, ledger, outcome, sessionId };
   };
 
+  const accept = async (data: unknown) => {
+    const parsed = outputSchema.safeParse(data);
+    if (!parsed.success) return null;
+    // Generic `.extend` loses the field types; the schema above guarantees this shape.
+    const { reportMarkdown, ...handoff } = parsed.data as Record<string, unknown> & { reportMarkdown?: string };
+    const report = input.renderReport ? input.renderReport(handoff) : (reportMarkdown ?? "");
+    await writeFile(stagePaths.report, `${report.trim()}\n`);
+    await writeJson(stagePaths.handoff, handoff);
+    return finish("succeeded", handoff as z.infer<Schema>, null);
+  };
+
   if (result?.subtype === "error_max_budget_usd") {
+    // The SDK checks the budget only after a turn completes, so the turn that
+    // delivers the final answer can itself cross the limit. A complete, valid
+    // answer the SDK already accepted is kept: the money is spent either way.
+    if (accepted !== undefined) {
+      salvagedAfterBudgetStop = true;
+      const kept = await accept(accepted);
+      if (kept) {
+        console.info("[stage] kept output delivered in the turn that crossed the budget", { stage: stagePaths.dirName });
+        return kept;
+      }
+      salvagedAfterBudgetStop = false;
+    }
     const error = `Stage hit its $${input.allowanceUsd.toFixed(2)} allowance and was stopped.`;
     await writeFile(stagePaths.report, failureReport(input.settings.label, error));
     return finish("stopped_budget", null, error);
@@ -189,22 +225,43 @@ export async function runStage<Schema extends z.ZodObject>(
     return finish("failed", null, error);
   }
 
+  const kept = await accept(result.structured_output);
+  if (kept) return kept;
   const parsed = outputSchema.safeParse(result.structured_output);
-  if (!parsed.success) {
-    const error = `Structured output did not match schema: ${parsed.error.message}`;
-    await writeFile(stagePaths.report, failureReport(input.settings.label, error));
-    return finish("failed", null, error);
-  }
-
-  // Generic `.extend` loses the field types; the schema above guarantees this shape.
-  const { reportMarkdown, ...handoff } = parsed.data as Record<string, unknown> & { reportMarkdown?: string };
-  const report = input.renderReport ? input.renderReport(handoff) : (reportMarkdown ?? "");
-  await writeFile(stagePaths.report, `${report.trim()}\n`);
-  await writeJson(stagePaths.handoff, handoff);
-  return finish("succeeded", handoff as z.infer<Schema>, null);
+  const error = `Structured output did not match schema: ${parsed.error?.message ?? "unknown"}`;
+  await writeFile(stagePaths.report, failureReport(input.settings.label, error));
+  return finish("failed", null, error);
 }
 
 type ResultMessage = Extract<SDKMessage, { type: "result" }>;
+
+/** The tool the SDK gives the model for submitting outputFormat answers. */
+const STRUCTURED_OUTPUT_TOOL = "StructuredOutput";
+
+/**
+ * Watches the message stream for an answer the SDK accepted: a
+ * StructuredOutput tool call followed by a non-error result for that call.
+ * A rejected submission (schema error) doesn't count; the latest accepted one wins.
+ */
+export class StructuredOutputTracker {
+  accepted: unknown = undefined;
+  private readonly submitted = new Map<string, unknown>();
+
+  observe(message: SDKMessage): void {
+    if (message.type === "assistant") {
+      for (const block of message.message.content) {
+        if (block.type === "tool_use" && block.name === STRUCTURED_OUTPUT_TOOL) this.submitted.set(block.id, block.input);
+      }
+    }
+    if (message.type === "user" && Array.isArray(message.message.content)) {
+      for (const block of message.message.content) {
+        if (block.type === "tool_result" && !block.is_error && this.submitted.has(block.tool_use_id)) {
+          this.accepted = this.submitted.get(block.tool_use_id);
+        }
+      }
+    }
+  }
+}
 
 function toOutputSchema(schema: z.ZodObject): Record<string, unknown> {
   // The CLI's validator rejects zod's "$schema" draft-2020-12 marker; the schema body is fine without it.

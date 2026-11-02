@@ -7,6 +7,7 @@ export const runsRoutes = new Elysia({ prefix: "/api/runs" })
     RunsController.createRun({ body, ip: clientIp(request, server?.requestIP(request)?.address) }),
   )
   .get("/:id", ({ params }) => RunsController.getRun(params.id))
+  .get("/:id/board", ({ params }) => RunsController.getBoard(params.id))
   .get("/:id/stages/:dirName/report", ({ params }) => RunsController.getStageReport(params.id, params.dirName));
 
 function clientIp(request: Request, fallback: string | undefined): string {

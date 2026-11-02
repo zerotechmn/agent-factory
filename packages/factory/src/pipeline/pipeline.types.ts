@@ -3,7 +3,8 @@ export const AGENT_STAGE_KEYS = [
   "research",
   "requirements",
   "testCases",
-  "design",
+  "architecture",
+  "uiDesign",
   "development",
   "review",
   "testing",
@@ -16,6 +17,17 @@ export type AgentStageKey = (typeof AGENT_STAGE_KEYS)[number];
 export const STAGE_KEYS = [...AGENT_STAGE_KEYS, "verify"] as const;
 
 export type StageKey = (typeof STAGE_KEYS)[number];
+
+/**
+ * "zt": the ZT Design System (React + Ant Design 6), for business and internal
+ * apps. "custom": a distinctive design per product (frontend-design skill),
+ * for consumer apps the ZT templates don't cover. Chosen per run.
+ */
+export const DESIGN_SYSTEMS = ["zt", "custom"] as const;
+
+export type DesignSystem = (typeof DESIGN_SYSTEMS)[number];
+
+export const DEFAULT_DESIGN_SYSTEM: DesignSystem = "zt";
 
 export const RUN_STATUSES = [
   "queued",

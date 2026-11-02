@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { useLocation } from "wouter";
 
+import { DESIGN_SYSTEM_OPTIONS } from "../runs.constants";
 import { useCreateRun } from "../runs.hooks";
+import type { DesignSystem } from "../runs.types";
 
 const EXAMPLES = [
   "A habit tracker where I can add habits and tick them off each day, with a weekly streak view",
@@ -11,12 +13,13 @@ const EXAMPLES = [
 
 export function NewRunPage() {
   const [prompt, setPrompt] = useState("");
+  const [designSystem, setDesignSystem] = useState<DesignSystem>("zt");
   const [, navigate] = useLocation();
   const createRun = useCreateRun();
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    createRun.mutate(prompt.trim(), { onSuccess: ({ id }) => navigate(`/runs/${id}`) });
+    createRun.mutate({ designSystem, prompt: prompt.trim() }, { onSuccess: ({ id }) => navigate(`/runs/${id}`) });
   };
 
   return (
@@ -36,6 +39,30 @@ export function NewRunPage() {
           placeholder="e.g. A recipe box where I can save recipes, tag them, and search by ingredient"
           className="w-full resize-y rounded-lg border border-stone-300 bg-white p-4 shadow-sm outline-none focus:border-stone-500 focus:ring-2 focus:ring-stone-200"
         />
+        <fieldset className="grid gap-2 sm:grid-cols-2">
+          <legend className="mb-2 text-sm font-medium text-stone-700">Design</legend>
+          {DESIGN_SYSTEM_OPTIONS.map((option) => (
+            <label
+              key={option.value}
+              className={`flex cursor-pointer gap-3 rounded-lg border bg-white p-3 text-sm ${
+                designSystem === option.value ? "border-stone-900 ring-1 ring-stone-900" : "border-stone-300"
+              }`}
+            >
+              <input
+                type="radio"
+                name="designSystem"
+                value={option.value}
+                checked={designSystem === option.value}
+                onChange={() => setDesignSystem(option.value)}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="block font-medium text-stone-900">{option.label}</span>
+                <span className="text-stone-600">{option.description}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <span className="text-sm text-stone-500">{prompt.trim().length} / 4000</span>
           <button

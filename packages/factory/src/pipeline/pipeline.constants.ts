@@ -1,4 +1,4 @@
-import type { AgentStageKey, StageSettings } from "./pipeline.types";
+import type { AgentStageKey, DesignSystem, StageSettings } from "./pipeline.types";
 
 const MINUTE = 60_000;
 const OPUS = "claude-opus-5-5";
@@ -6,7 +6,7 @@ const SONNET = "claude-sonnet-5-5";
 
 // Sonnet handles the document and judgement stages; Opus is kept for the
 // stages whose output is code or architecture, where quality pays for itself.
-// A straight pass is allocated ~$9.9, leaving ~$4.1 under the $15 cap (after
+// A straight pass is allocated ~$10.2, leaving ~$3.8 under the $15 cap (after
 // the $1 reserve) for repair and fix rounds.
 export const STAGE_SETTINGS: Record<AgentStageKey, StageSettings> = {
   deployment: {
@@ -19,14 +19,14 @@ export const STAGE_SETTINGS: Record<AgentStageKey, StageSettings> = {
     skills: [],
     timeoutMs: 20 * MINUTE,
   },
-  design: {
-    budgetUsd: 1.0,
+  architecture: {
+    budgetUsd: 0.8,
     effort: "high",
-    label: "Design",
+    label: "Architecture",
     maxTurns: 20,
-    minUsd: 0.3,
+    minUsd: 0.25,
     model: OPUS,
-    skills: ["factory:frontend-design"],
+    skills: [],
     timeoutMs: 10 * MINUTE,
   },
   development: {
@@ -36,7 +36,12 @@ export const STAGE_SETTINGS: Record<AgentStageKey, StageSettings> = {
     maxTurns: 250,
     minUsd: 1.0,
     model: OPUS,
-    skills: ["factory:test-driven-development", "factory:verification-before-completion", "factory:frontend-design"],
+    skills: [
+      "factory:test-driven-development",
+      "factory:verification-before-completion",
+      "factory:frontend-design",
+      "factory:web-interface-guidelines",
+    ],
     timeoutMs: 45 * MINUTE,
   },
   requirements: {
@@ -67,7 +72,7 @@ export const STAGE_SETTINGS: Record<AgentStageKey, StageSettings> = {
     maxTurns: 60,
     minUsd: 0.2,
     model: SONNET,
-    skills: [],
+    skills: ["factory:web-interface-guidelines"],
     timeoutMs: 15 * MINUTE,
   },
   testCases: {
@@ -79,6 +84,18 @@ export const STAGE_SETTINGS: Record<AgentStageKey, StageSettings> = {
     model: SONNET,
     skills: [],
     timeoutMs: 5 * MINUTE,
+  },
+  uiDesign: {
+    budgetUsd: 0.6,
+    // Medium: the visual thinking happens in the skill's two-pass process; high
+    // effort mostly added thinking tokens to an already output-heavy stage.
+    effort: "medium",
+    label: "UI/UX design",
+    maxTurns: 10,
+    minUsd: 0.2,
+    model: OPUS,
+    skills: ["factory:frontend-design"],
+    timeoutMs: 10 * MINUTE,
   },
   testing: {
     budgetUsd: 0.75,
@@ -118,3 +135,17 @@ export const VERIFY_LABEL = "Verify";
 
 /** Install + test command limit inside the verify gate. */
 export const VERIFY_TESTS_TIMEOUT_MS = 10 * MINUTE;
+
+const ZT_SKILL = "factory:zt-design-system";
+
+/**
+ * On ZT runs the ZT Design System replaces frontend-design wherever that is
+ * used (it says "read only this file"), and review checks against it too.
+ * Custom-design runs keep the configured skills.
+ */
+export function skillsFor(stageKey: AgentStageKey, designSystem: DesignSystem, skills: string[]): string[] {
+  if (designSystem !== "zt") return skills;
+  const swapped = skills.map((skill) => (skill === "factory:frontend-design" ? ZT_SKILL : skill));
+  if (stageKey === "review" && !swapped.includes(ZT_SKILL)) swapped.push(ZT_SKILL);
+  return swapped;
+}
