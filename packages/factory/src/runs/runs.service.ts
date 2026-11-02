@@ -7,12 +7,14 @@ import { executeRun } from "../pipeline/pipeline.service";
 import { createRunSchema, runIdSchema } from "./runs.dto";
 import * as RunsStore from "./runs.store";
 
-export async function createRun({ body, ip }: { body: unknown; ip: string }) {
+export async function createRun({ benchmarkToken, body, ip }: { benchmarkToken?: string | null; body: unknown; ip: string }) {
   const parsed = createRunSchema.safeParse(body);
   if (!parsed.success) throw new ValidationError(parsed.error.issues[0]?.message ?? "Invalid input", parsed.error.issues);
 
   const since = startOfUtcDay();
-  if (RunsStore.countRunsByIpSince(ip, since) >= config.RUNS_PER_IP_PER_DAY) {
+  // The benchmark submits a fixed prompt set in one go; it still counts against the daily spend cap below.
+  const benchmark = Boolean(config.BENCHMARK_TOKEN) && benchmarkToken === config.BENCHMARK_TOKEN;
+  if (!benchmark && RunsStore.countRunsByIpSince(ip, since) >= config.RUNS_PER_IP_PER_DAY) {
     throw new TooManyRequestsError(`Limit of ${config.RUNS_PER_IP_PER_DAY} builds per day reached. Try again tomorrow.`);
   }
   // Each queued run may still spend a full budget, so count it against the cap up front.

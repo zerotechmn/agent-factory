@@ -1,10 +1,13 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { Acceptance } from "../agents/acceptance/acceptance.schema";
 import { agentFor } from "../agents/agents.registry";
 import { asPrd } from "../agents/requirements/requirements.utils";
-import { validatePrd } from "../agents/requirements/requirements.validate";
+import { coverageIssues, type PrdReview } from "../agents/prd-review/prd-review.schema";
+import { checkPrdQuality, validatePrd } from "../agents/requirements/requirements.validate";
 import { systemPromptFor, type StageContext } from "../agents/agents.shared";
 import * as BoardService from "../board/board.service";
 import { config } from "../lib/config";
@@ -12,6 +15,7 @@ import { callDeployer } from "../lib/deployer";
 import * as LibrarianService from "../librarian/librarian.service";
 import type { PendingLesson } from "../librarian/librarian.service";
 import * as LibrarianStore from "../librarian/librarian.store";
+import { librarianHooks } from "../librarian/librarian.hooks";
 import { librarianMcpServer, librarianToolNames, librarianToolsets } from "../librarian/librarian.tools";
 import type { LessonInput } from "../librarian/librarian.types";
 import * as RunsStore from "../runs/runs.store";
@@ -28,6 +32,7 @@ import {
 } from "./pipeline.artifacts";
 import { commitAllowance, createBudget, decideAllowance, recordSpend, type Budget } from "./pipeline.budget";
 import {
+  ACCEPTANCE_REPAIR_BUDGET_USD,
   APP_PORT,
   DEPLOY_RESERVE_USD,
   FIX_BUDGET_USD,
@@ -39,6 +44,7 @@ import {
   VERIFY_LABEL,
 } from "./pipeline.constants";
 import { runGate, type GateMode, type GateResult, type SmokeCheck } from "./pipeline.gate";
+import { checkAcceptanceFiles, installAcceptance, protectAcceptance } from "./pipeline.acceptance";
 import { activityObserver, clearActivity, recordActivity } from "./pipeline.activity";
 import { runStage, type StageOutcome } from "./pipeline.stage-runner";
 import { shouldCheckMobile, uiScreensFrom } from "./pipeline.ui-check";
@@ -101,6 +107,16 @@ class Pipeline {
   private readonly appUrl: string;
   /** Labels of stages in flight; more than one while parallel branches run. */
   private readonly running = new Set<string>();
+  /** Testability, scope and coverage problems the PRD gates found (repaired or only reported, per PRD_GATES). */
+  private prdGateIssues: string[] = [];
+  /** The independent tester's suite, installed into the workspace once development is done. */
+  private acceptanceSuite: Acceptance | null = null;
+  /** Workspace commit holding the acceptance suite as the tester (or triage) left it. */
+  private acceptanceCommit: string | null = null;
+  /** Changes other agents made to acceptance/ that the factory put back. */
+  private readonly acceptanceViolations: string[] = [];
+  /** The last full verify's acceptance result, for SUMMARY.md. */
+  private lastAcceptance: GateResult["acceptance"] = null;
   /** The developer's latest session, resumed by fix rounds so they start with full context. */
   private devSessionId: string | null = null;
   /** Workspace commit the live container was built from. */
@@ -129,7 +145,7 @@ class Pipeline {
 
     const requirements = await this.step("requirements");
     if (requirements.outcome !== "succeeded") return this.stop(requirements, "Requirements failed");
-    await this.repairPrd(requirements.sessionId);
+    await this.gatePrd(requirements.sessionId);
 
     // All three depend only on the PRD, so they run side by side. The UI/UX
     // design is valuable but not essential: without it the developer still
@@ -142,11 +158,14 @@ class Pipeline {
     if (testCases.outcome !== "succeeded") return this.stop(testCases, "Test cases failed");
     if (architecture.outcome !== "succeeded") return this.stop(architecture, "Architecture failed");
 
-    const dev = await this.step("development");
+    // The independent tester writes black-box tests from the same contract
+    // while the developer builds, so it adds no waiting time.
+    const [dev] = await Promise.all([this.step("development"), this.writeAcceptanceTests()]);
     this.devSessionId = dev.sessionId;
     if (!(await workspaceHasFile(this.paths, "Dockerfile"))) {
       return this.stop(dev, "Development produced no deployable app (no Dockerfile)");
     }
+    await this.installAcceptanceSuite();
 
     const { clean, lastGate } = await this.verifyAndFix();
     const healthy = await this.ensureDeployed(lastGate);
@@ -162,17 +181,25 @@ class Pipeline {
   }
 
   /**
-   * The PRD's cross-references are checked by code. If any are broken, the
-   * requirements session is resumed once to correct them: cheap, because the
-   * agent already has its PRD in context, and far cheaper than design and
-   * development working from an inconsistent spec. Remaining problems are
-   * listed in the PRD report and don't stop the run.
+   * The PRD gates, before ~$4.50 of design and development is built on it:
+   * cross-references, testability and scope are checked by code (free), and
+   * an independent reviewer checks it covers what the customer asked (about
+   * $0.05-0.10). Problems get one resumed repair of the requirements session:
+   * cheap, because the agent already has its PRD in context. Cross-reference
+   * problems are always repaired; the other gates only with PRD_GATES=repair,
+   * otherwise they are reported. Nothing here stops the run.
    */
-  private async repairPrd(sessionId: string | null): Promise<void> {
+  private async gatePrd(sessionId: string | null): Promise<void> {
     const prd = asPrd(this.handoffs.requirements);
-    const issues = prd ? validatePrd(prd) : [];
+    const references = prd ? validatePrd(prd) : [];
+    const quality = prd ? checkPrdQuality(prd) : { scope: [], testability: [] };
+    const review = await this.step("prdReview");
+    const coverage = review.outcome === "succeeded" ? coverageIssues(review.handoff as PrdReview) : [];
+    this.prdGateIssues = [...quality.testability, ...quality.scope, ...coverage];
+
+    const issues = config.PRD_GATES === "repair" ? [...references, ...this.prdGateIssues] : references;
+    console.info("[pipeline] PRD gates", { coverage: coverage.length, mode: config.PRD_GATES, references: references.length, runId: this.id, scope: quality.scope.length, testability: quality.testability.length });
     if (issues.length === 0) return;
-    console.info("[pipeline] PRD inconsistent; repairing", { issues: issues.length, runId: this.id });
     await this.step("requirements", {
       budgetUsd: PRD_REPAIR_BUDGET_USD,
       repairIssues: issues,
@@ -221,7 +248,7 @@ class Pipeline {
 
       let triage: TriageHandoff | null = null;
       let triageFailed = false;
-      if (gate.failedSteps.includes("tests")) {
+      if (gate.failedSteps.includes("tests") || gate.failedSteps.includes("acceptance")) {
         const result = await this.step("testing", { gate, suffix: `triage-${round + 1}` });
         if (isBudgetStop(result.outcome)) return { clean: false, lastGate };
         triage = result.outcome === "succeeded" ? (result.handoff as TriageHandoff) : null;
@@ -286,6 +313,7 @@ class Pipeline {
     const testPlan = this.handoffs.testCases as { smokeChecks?: SmokeCheck[] } | undefined;
     const gate = await runGate({
       onStep: (text) => recordActivity(this.id, label, text),
+      acceptanceMode: config.ACCEPTANCE_MODE,
       appPort: APP_PORT,
       // The developer reports the commands it actually verified; the architecture's are a fallback.
       commands: dev?.commands ?? architecture?.commands ?? null,
@@ -298,6 +326,7 @@ class Pipeline {
       uiScreens: uiScreensFrom(this.handoffs.development),
     });
     if (gate.containerOk) this.deployedCommit = commit;
+    if (gate.acceptance) this.lastAcceptance = gate.acceptance;
     await BoardService.safely("verify", async () => {
       const testLog = mode === "full" ? await readFile(join(sp.dir, "tests.log"), "utf8").catch(() => "") : "";
       const testsWritten = (this.handoffs.development as { testsWritten?: string[] } | undefined)?.testsWritten ?? [];
@@ -324,6 +353,40 @@ class Pipeline {
     this.markRunning(label, false);
     await this.writeRunJson("running");
     return gate;
+  }
+
+  /**
+   * Runs the acceptance tester, checks its files parse (one resumed repair if
+   * not) and keeps the suite for installation once development is done.
+   * Never stops the run: without a suite, verify simply has no acceptance step.
+   */
+  private async writeAcceptanceTests(): Promise<void> {
+    const first = await this.step("acceptance");
+    if (first.outcome !== "succeeded") return;
+    let suite = first.handoff as Acceptance;
+    let issues = await checkAcceptanceFiles(suite, await mkdtemp(join(tmpdir(), "acceptance-")));
+    if (issues.length) {
+      const repair = await this.step("acceptance", {
+        budgetUsd: ACCEPTANCE_REPAIR_BUDGET_USD,
+        repairIssues: issues,
+        resumeSessionId: first.sessionId,
+        suffix: "repair",
+      });
+      if (repair.outcome === "succeeded") {
+        suite = repair.handoff as Acceptance;
+        issues = await checkAcceptanceFiles(suite, await mkdtemp(join(tmpdir(), "acceptance-")));
+      }
+    }
+    // A file that still doesn't parse would fail as a whole; leave it out and say so.
+    const broken = new Set(issues.map((issue) => issue.split(":")[0]));
+    if (broken.size) console.info("[pipeline] acceptance files left out", { files: [...broken], runId: this.id });
+    this.acceptanceSuite = { ...suite, files: suite.files.filter((f) => !broken.has(f.path)) };
+  }
+
+  private async installAcceptanceSuite(): Promise<void> {
+    if (!this.acceptanceSuite?.files.length) return;
+    recordActivity(this.id, VERIFY_LABEL, `Adding ${this.acceptanceSuite.files.length} acceptance test files to the workspace`);
+    this.acceptanceCommit = await installAcceptance(this.paths, this.acceptanceSuite);
   }
 
   private async step(stageKey: AgentStageKey, options: StepOptions = {}): Promise<StepResult> {
@@ -365,8 +428,9 @@ class Pipeline {
       fix: options.fix ?? null,
       gate: options.gate ?? null,
       handoffs: this.handoffs,
-      lessons: stageKey === "development" && !options.fix ? this.promptLessons() : [],
+      lessons: this.lessonsFor(stageKey, options, label),
       librarianToolsets: toolsets,
+      libraryIndex: this.libraryIndexFor(stageKey, options, label),
       repairIssues: options.repairIssues ?? null,
       rereview: options.rereview ?? null,
       resumed: false,
@@ -392,6 +456,7 @@ class Pipeline {
       allowedTools: [...agent.allowedTools, ...librarianToolNames(stageKey)],
       cwd: agent.cwd(ctx),
       freshPrompt: promptFor(false),
+      hooks: librarianHooks({ runId: this.id, stage: label, stageKey }),
       mcpServers: librarian ? { ...agent.mcpServers?.(ctx), librarian } : agent.mcpServers?.(ctx),
       model: config.FACTORY_MODEL ?? settings.model,
       onMessage: this.observer(stageKey, label, agent.cwd(ctx)),
@@ -416,6 +481,7 @@ class Pipeline {
     });
     RunsStore.updateRun(this.id, { costUsd: this.budget.spentUsd });
     if (WORKSPACE_STAGES.has(stageKey)) await commitWorkspace(this.paths, `${sp.dirName}: ${label}`);
+    await this.guardAcceptance(stageKey, label);
 
     if (result.outcome === "succeeded") {
       this.handoffs[stageKey] = result.handoff;
@@ -432,6 +498,25 @@ class Pipeline {
       stage: sp.dirName,
     });
     return { handoff: result.handoff, outcome: result.outcome, sessionId: result.sessionId };
+  }
+
+  /**
+   * The acceptance suite is the independent check, so the developer and the
+   * deployment repair agent may read it but never change it: anything they
+   * touched is put back. Test triage may fix tests that contradict the
+   * contract, so its changes become the new baseline.
+   */
+  private async guardAcceptance(stageKey: AgentStageKey, label: string): Promise<void> {
+    if (!this.acceptanceCommit) return;
+    if (stageKey === "testing") {
+      this.acceptanceCommit = await headCommit(this.paths);
+      return;
+    }
+    if (stageKey !== "development" && stageKey !== "deployment") return;
+    const restored = await protectAcceptance(this.paths, this.acceptanceCommit);
+    if (!restored.length) return;
+    this.acceptanceViolations.push(`${label} changed ${restored.join(", ")}; restored`);
+    console.info("[pipeline] acceptance tests restored", { label, restored, runId: this.id });
   }
 
   /** Independent of what any agent claims: ask the deployer directly. */
@@ -469,14 +554,54 @@ class Pipeline {
     }
   }
 
-  private promptLessons() {
+  /**
+   * Lessons pushed into a prompt, so the agent gets them without spending a
+   * turn: container traps for the architect, this stack's most common traps
+   * for the first build, and lessons matching the exact failure for repairs.
+   */
+  private lessonsFor(stageKey: AgentStageKey, options: StepOptions, label: string): StageContext["lessons"] {
     if (config.LIBRARIAN === "off") return [];
     try {
-      return LibrarianService.topLessons(this.designSystem);
+      const pick = (): { lessons: StageContext["lessons"]; query: string } => {
+        if (stageKey === "architecture") {
+          return { lessons: LibrarianService.rankedLessons({ designSystem: this.designSystem, limit: 3, steps: ["build", "run", "health"], tags: [] }), query: "container traps" };
+        }
+        if (stageKey === "development" && !options.fix) {
+          const tags = LibrarianService.stackTags(this.handoffs.architecture);
+          return { lessons: LibrarianService.rankedLessons({ designSystem: this.designSystem, tags }), query: `stack: ${tags.join(", ")}` };
+        }
+        if (stageKey === "development" || stageKey === "testing" || stageKey === "deployment") {
+          const gate = options.fix?.gate ?? options.gate ?? null;
+          const review = (options.fix?.review ?? null) as Parameters<typeof LibrarianService.lessonsForFailure>[0]["review"];
+          return { lessons: LibrarianService.lessonsForFailure({ gate, review }), query: `failure: ${gate?.failedSteps.join(", ") ?? ""}${review ? " + review" : ""}` };
+        }
+        return { lessons: [], query: "" };
+      };
+      const { lessons, query } = pick();
+      if (query) this.logPush(label, "auto:lessons", query, lessons.length);
+      return lessons;
     } catch (error) {
       console.error("[pipeline] reading lessons failed", { message: error instanceof Error ? error.message : String(error), runId: this.id });
       return [];
     }
+  }
+
+  /** The architect chooses libraries and the first build writes common modules: both see what the librarian holds. */
+  private libraryIndexFor(stageKey: AgentStageKey, options: StepOptions, label: string): StageContext["libraryIndex"] {
+    if (config.LIBRARIAN === "off") return null;
+    if (stageKey !== "architecture" && !(stageKey === "development" && !options.fix)) return null;
+    try {
+      const catalog = LibrarianStore.listCatalog(10);
+      this.logPush(label, "auto:catalog", "catalog list", catalog.length);
+      return { catalog, docs: LibrarianStore.listLibraries() };
+    } catch (error) {
+      console.error("[pipeline] reading the library index failed", { message: error instanceof Error ? error.message : String(error), runId: this.id });
+      return null;
+    }
+  }
+
+  private logPush(stage: string, tool: string, query: string, hits: number): void {
+    LibrarianStore.logQuery({ at: new Date().toISOString(), hits, query, runId: this.id, stage, tool });
   }
 
   /** Moves board cards from a finished stage's handoff. */
@@ -549,6 +674,24 @@ class Pipeline {
     });
   }
 
+  private renderPrdGateSummary(): string {
+    if (!this.prdGateIssues.length) return "";
+    const how = config.PRD_GATES === "repair" ? "sent back to the requirements agent in its repair round" : "reported only (PRD_GATES=advisory)";
+    return `\n## PRD gates\n\n${this.prdGateIssues.length} testability, scope or coverage problem(s), ${how}. See the PRD and PRD check reports.\n`;
+  }
+
+  private renderAcceptanceSummary(): string {
+    const a = this.lastAcceptance;
+    if (!a && !this.acceptanceViolations.length) return "";
+    const result = !a
+      ? "not run"
+      : a.skipped
+        ? a.skipped
+        : `${a.passed} passed, ${a.failed} failed (${a.mode}${a.mode === "advisory" && a.failed ? ": reported, did not fail the build" : ""})`;
+    const violations = this.acceptanceViolations.length ? `\n\nRestored after other agents changed them: ${this.acceptanceViolations.join("; ")}.` : "";
+    return `\n## Acceptance tests (independent)\n\n${result}${violations}\n`;
+  }
+
   private renderSummary(status: RunStatus, stopReason: string | null): string {
     const stages = RunsStore.listStages(this.id);
     const rows = stages
@@ -556,7 +699,7 @@ class Pipeline {
       .join("\n");
     const app = RunsStore.getRun(this.id)?.appUrl;
     const librarian = LibrarianStore.queryStats(this.id)
-      .map((s) => `| ${s.stage} | ${s.calls} | ${s.withHits} |`)
+      .map((s) => `| ${s.stage} | ${s.pulls} | ${s.withHits} | ${s.auto} | ${s.capped} |`)
       .join("\n");
     return `# Run ${this.id}
 
@@ -571,7 +714,7 @@ ${this.prompt}
 | # | Stage | Status | Cost | Report |
 |---|---|---|---|---|
 ${rows}
-${librarian ? `\n## Librarian\n\n| Stage | Queries | With hits |\n|---|---|---|\n${librarian}\n` : ""}
+${this.renderPrdGateSummary()}${this.renderAcceptanceSummary()}${librarian ? `\n## Librarian\n\n| Stage | Asked | With hits | Auto | Hit cap |\n|---|---|---|---|---|\n${librarian}\n\n"Asked" are the agent's own lookups; "Auto" is knowledge the factory handed over in the prompt or after a tool call.\n` : ""}
 "Verify" stages are the factory's own automated checks (tests, image build, container health, smoke checks) and cost nothing. Agent stage folders also hold \`handoff.json\` (what later agents received), \`input-prompt.md\` (what the agent was asked), \`transcript.jsonl\` (full agent trace) and \`meta.json\` (model, skills, tokens, cost, resumed session). Per-stage code changes: \`git -C workspace log -p\`.
 `;
   }

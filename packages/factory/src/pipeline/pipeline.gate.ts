@@ -4,15 +4,18 @@ import { join } from "node:path";
 import { callDeployer } from "../lib/deployer";
 import { writeJson, type RunPaths, type StagePaths } from "./pipeline.artifacts";
 import { VERIFY_TESTS_TIMEOUT_MS } from "./pipeline.constants";
+import { runAcceptance, type AcceptanceResult } from "./pipeline.acceptance";
 import { runUiCheck, summarizeUiFailures, type UiCheckResult, type UiScreen } from "./pipeline.ui-check";
 
-export type GateStep = "tests" | "build" | "run" | "health" | "smoke" | "ui";
+export type GateStep = "tests" | "build" | "run" | "health" | "smoke" | "ui" | "acceptance";
 
 export type SmokeCheck = { description: string; expectStatus: number; id: string; method: string; path: string };
 
 export type SmokeResult = { actualStatus: number | null; expectStatus: number; id: string; ok: boolean; path: string };
 
 export type GateResult = {
+  /** The independent tester's black-box suite; null when not run (container-only re-check, or no container). */
+  acceptance: (AcceptanceResult & { mode: "advisory" | "blocking" }) | null;
   /** Image built, container running and /health returned 200. */
   containerOk: boolean;
   failedSteps: GateStep[];
@@ -47,6 +50,7 @@ export async function runGate({
   onStep = () => {},
   paths,
   runId,
+  acceptanceMode = "advisory",
   smokeChecks,
   stagePaths,
   uiBaseUrl,
@@ -60,6 +64,8 @@ export async function runGate({
   onStep?: (text: string) => void;
   paths: RunPaths;
   runId: string;
+  /** advisory: reported only; blocking: a failure fails verify. */
+  acceptanceMode?: "advisory" | "blocking";
   smokeChecks: SmokeCheck[];
   stagePaths: StagePaths;
   /** Where the browser reaches the app; defaults to the container on the shared Docker network. */
@@ -123,7 +129,19 @@ export async function runGate({
     }
   }
 
+  // Last: the slowest step, and a separate container, so a broken app above is reported first.
+  let acceptance: GateResult["acceptance"] = null;
+  if (container.ok && mode === "full") {
+    const ran = await runAcceptance({ appPort, logPath: join(stagePaths.dir, "acceptance.log"), onStep, runId, workspace: paths.workspace });
+    if (!ran.skipped || !ran.ok) acceptance = { ...ran, mode: acceptanceMode };
+    if (acceptance && !acceptance.ok && acceptanceMode === "blocking") {
+      failedSteps.push("acceptance");
+      logs.acceptance = excerpt(await readFile(join(stagePaths.dir, "acceptance.log"), "utf8").catch(() => ""));
+    }
+  }
+
   const result: GateResult = {
+    acceptance,
     containerOk: container.ok,
     failedSteps,
     logs,
@@ -239,9 +257,18 @@ const STEP_LABELS: Record<GateStep, string> = {
   health: "GET /health",
   run: "Container start",
   smoke: "Smoke checks",
+  acceptance: "Acceptance tests (independent)",
   tests: "Install + test suite",
   ui: "Browser checks",
 };
+
+function acceptanceState(a: GateResult["acceptance"]): string {
+  if (!a) return "– not run";
+  if (a.skipped) return `✕ ${a.skipped}${a.mode === "advisory" ? " (advisory)" : ""}`;
+  const counts = `${a.passed} passed, ${a.failed} failed${a.timedOut ? ", timed out" : ""}`;
+  if (a.ok) return `✓ passed (${counts})`;
+  return a.mode === "advisory" ? `⚠ ${counts} — advisory, does not fail verify` : `✕ failed (${counts})`;
+}
 
 function renderReport(result: GateResult): string {
   const row = (step: GateStep, state: string) => `| ${STEP_LABELS[step]} | ${state} |`;
@@ -265,6 +292,7 @@ function renderReport(result: GateResult): string {
           ? `– skipped: ${result.ui.skipped}`
           : `${stepState("ui")} (${result.ui.pages.filter((p) => !p.failures.length).length}/${result.ui.pages.length} screen × viewport checks clean)`,
     ),
+    row("acceptance", acceptanceState(result.acceptance)),
   ];
   const smokeTable = result.smoke.length
     ? `\n\n## Smoke checks\n\n| Check | Path | Expected | Actual |\n|---|---|---|---|\n${result.smoke
@@ -287,6 +315,7 @@ function renderReport(result: GateResult): string {
     result.tests ? "`tests.log`" : null,
     "`build.log`",
     result.failedSteps.some((s) => s === "run" || s === "health") ? "`container.log`" : null,
+    result.acceptance ? "`acceptance.log`" : null,
   ].filter(Boolean);
 
   return `# Verify — ${result.passed ? "passed" : "failed"}

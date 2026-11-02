@@ -106,7 +106,7 @@ function examplePrd(): Prd {
           { actions: ["Батлах"], canView: true, role: "Захирал" },
         ],
         roles: ["Менежер", "Захирал"],
-        states: [{ display: '"Захиалга олдсонгүй"', state: "Not found" }],
+        states: [{ display: '"Захиалга олдсонгүй"', kind: "not-found", state: "Олдсонгүй" }],
       },
     ],
     title: "Захиалгын батламж",

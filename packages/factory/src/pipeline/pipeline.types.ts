@@ -2,10 +2,12 @@
 export const AGENT_STAGE_KEYS = [
   "research",
   "requirements",
+  "prdReview",
   "testCases",
   "architecture",
   "uiDesign",
   "development",
+  "acceptance",
   "review",
   "testing",
   "deployment",

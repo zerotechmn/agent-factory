@@ -164,6 +164,16 @@ export function onVerify(
     const written = new Set([...testsWritten.map(testKey), ...results.keys()]);
     for (const card of cards.filter((c) => c.kind === "test")) {
       const key = testKey(card.id);
+      // The independent tester's result outranks the developer's own test for the same case.
+      const independent = gate.acceptance?.perCase[key];
+      if (independent) {
+        const advisory = gate.acceptance?.mode === "advisory" && independent === "failed" ? " (advisory)" : "";
+        BoardStore.moveCard(runId, card.id, independent === "passed" ? "verified" : "failed", {
+          ...stamp,
+          note: `Independent acceptance test ${independent}${advisory}`,
+        });
+        continue;
+      }
       const next = testColumnAfterVerify({ card, logResult: results.get(key), suitePassed: gate.tests.ok, written: written.has(key) });
       if (next) BoardStore.moveCard(runId, card.id, next.column, { ...stamp, note: next.note });
     }

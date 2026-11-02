@@ -101,3 +101,52 @@ function refs(issues: string[], where: string, kind: string, values: string[], k
     if (!known.has(value)) issues.push(`${where}: references unknown ${kind} ${value}`);
   }
 }
+
+/**
+ * What one development session builds well for about $4 (runs so far: 6-7
+ * features, 6-8 screens, 31-41 acceptance criteria). Above this, the PRD is
+ * likely to run out of budget or time before verify, so it should be cut.
+ */
+export const SCOPE_LIMITS = { acceptanceCriteria: 50, features: 8, screens: 10 } as const;
+
+/**
+ * Checks the JSON schema can't express, beyond cross-references: is every
+ * feature testable both ways, does every screen say what users see while
+ * loading and on error, and is the scope buildable in one run. Free and
+ * instant; the factory reports these (or repairs them, per PRD_GATES).
+ */
+export function checkPrdQuality(prd: Prd): { scope: string[]; testability: string[] } {
+  const testability: string[] = [];
+  for (const feature of prd.features) {
+    const kinds = new Set(feature.acceptanceCriteria.map((ac) => ac.kind));
+    if (!kinds.has("positive")) testability.push(`${feature.id}: no positive acceptance criterion (what success looks like)`);
+    if (feature.ruleIds.length && !kinds.has("negative")) {
+      testability.push(`${feature.id}: uses ${feature.ruleIds.join(", ")} but has no negative acceptance criterion`);
+    }
+  }
+  for (const rule of prd.businessRules) {
+    if (!rule.example.trim()) testability.push(`${rule.id}: no worked example`);
+  }
+  for (const screen of prd.screens) {
+    const kinds = new Set(screen.states.map((s) => stateKind(s)));
+    for (const needed of ["loading", "error"] as const) {
+      if (!kinds.has(needed)) testability.push(`${screen.id}: no ${needed} state (what users see ${needed === "loading" ? "while data loads" : "when loading or saving fails"})`);
+    }
+  }
+
+  const scope: string[] = [];
+  const acCount = prd.features.reduce((n, f) => n + f.acceptanceCriteria.length, 0);
+  if (prd.features.length > SCOPE_LIMITS.features) scope.push(`${prd.features.length} features (limit ${SCOPE_LIMITS.features}): cut to an MVP and move the rest to outOfScope`);
+  if (prd.screens.length > SCOPE_LIMITS.screens) scope.push(`${prd.screens.length} screens (limit ${SCOPE_LIMITS.screens}): merge or cut screens`);
+  if (acCount > SCOPE_LIMITS.acceptanceCriteria) scope.push(`${acCount} acceptance criteria (limit ${SCOPE_LIMITS.acceptanceCriteria}): cut scope or merge overlapping criteria`);
+  return { scope, testability };
+}
+
+/** PRDs written before states had a kind name them in English; fall back to the name. */
+function stateKind(state: { kind?: string; state: string }): string {
+  if (state.kind) return state.kind;
+  const name = state.state.toLowerCase();
+  if (name.includes("load")) return "loading";
+  if (name.includes("error") || name.includes("fail")) return "error";
+  return "other";
+}

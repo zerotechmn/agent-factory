@@ -117,6 +117,13 @@ export async function commitWorkspace(paths: RunPaths, message: string): Promise
   await git("commit", "-q", "--allow-empty", "-m", message);
 }
 
+/** Runs git in the workspace and returns its stdout (empty on failure). */
+export async function gitOutput(paths: RunPaths, args: string[]): Promise<string> {
+  const proc = Bun.spawn(["git", ...args], { cwd: paths.workspace, stderr: "ignore", stdout: "pipe" });
+  const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  return code === 0 ? out : "";
+}
+
 /** Current workspace commit, so a re-review can diff exactly what changed since the last review. */
 export async function headCommit(paths: RunPaths): Promise<string | null> {
   const proc = Bun.spawn(["git", "rev-parse", "HEAD"], { cwd: paths.workspace, stderr: "ignore", stdout: "pipe" });

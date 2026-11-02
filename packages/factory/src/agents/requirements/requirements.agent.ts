@@ -37,9 +37,9 @@ ${ctx.userPrompt}${ctx.handoffs.research ? `\n\n${jsonBlock("Research on similar
 }
 
 function repairPrompt(ctx: StageContext): string {
-  const issues = jsonBlock("Consistency problems found by the factory", ctx.repairIssues);
+  const issues = jsonBlock("Problems found by the factory's PRD checks", ctx.repairIssues);
   if (ctx.resumed) {
-    return `The factory checked your PRD's ids and cross-references and found the problems below. Return the complete corrected PRD, changing only what is needed to fix them.
+    return `The factory checked your PRD (ids and cross-references, testability, scope, and coverage of the user's request) and found the problems below. Return the complete corrected PRD, changing only what is needed to fix them. Where a problem says the user asked for something the PRD lacks, add it; where it says something wasn't asked for, move it to outOfScope unless the request needs it.
 
 ${issues}`;
   }
@@ -47,7 +47,7 @@ ${issues}`;
 
 ## Correction
 
-A previous version of this PRD (below) had the consistency problems listed. Return the complete corrected PRD, changing only what is needed to fix them.
+A previous version of this PRD (below) had the problems listed. Return the complete corrected PRD, changing only what is needed to fix them.
 
 ${issues}
 

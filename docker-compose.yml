@@ -30,14 +30,17 @@ services:
   factory:
     build: { context: ., dockerfile: packages/factory/Dockerfile }
     environment:
+      ACCEPTANCE_MODE: ${ACCEPTANCE_MODE:-advisory}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?Set ANTHROPIC_API_KEY in .env}
       BASE_DOMAIN: *domain
+      BENCHMARK_TOKEN: ${BENCHMARK_TOKEN:-}
       DAILY_SPEND_CAP_USD: ${DAILY_SPEND_CAP_USD:-100}
       DEPLOYER_URL: http://deployer:4100
       FACTORY_MODEL: ${FACTORY_MODEL:-}
       LIBRARIAN: ${LIBRARIAN:-on}
       LIBRARIAN_LESSONS: ${LIBRARIAN_LESSONS:-on}
       MAX_CONCURRENT_RUNS: ${MAX_CONCURRENT_RUNS:-1}
+      PRD_GATES: ${PRD_GATES:-advisory}
       PUBLIC_HTTP_PORT: ${HTTP_PORT:-80}
       RUN_BUDGET_USD: ${RUN_BUDGET_USD:-15}
       RUNS_PER_IP_PER_DAY: ${RUNS_PER_IP_PER_DAY:-3}

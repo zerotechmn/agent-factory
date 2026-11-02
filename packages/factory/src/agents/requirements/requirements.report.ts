@@ -1,5 +1,5 @@
 import type { Prd } from "./requirements.schema";
-import { validatePrd } from "./requirements.validate";
+import { checkPrdQuality, validatePrd } from "./requirements.validate";
 
 /**
  * Renders the PRD in the layout of "PRD Template v2 (Feature + Screen)",
@@ -212,6 +212,20 @@ export function renderPrd(prd: Prd): string {
     issues.length
       ? `The factory found ${issues.length} cross-reference problem(s):\n\n${list(issues)}`
       : "All ids are well-formed and every reference resolves.",
+    "",
+  );
+
+  const quality = checkPrdQuality(prd);
+  out.push("## Testability and scope check", "");
+  out.push(
+    quality.testability.length || quality.scope.length
+      ? [
+          quality.testability.length ? `Testability:\n\n${list(quality.testability)}` : "",
+          quality.scope.length ? `Scope:\n\n${list(quality.scope)}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n")
+      : "Every feature has positive (and, where it uses rules, negative) acceptance criteria, every screen has loading and error states, and the scope fits one run.",
     "",
   );
 

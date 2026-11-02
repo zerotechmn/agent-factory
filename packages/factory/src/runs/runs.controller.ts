@@ -3,8 +3,8 @@ import * as RunsService from "./runs.service";
 
 type Envelope = { data: unknown; message: string; status: number; type: "list" | "object" };
 
-export async function createRun({ body, ip }: { body: unknown; ip: string }) {
-  return respond(async () => RunsService.createRun({ body, ip }), { message: "Run queued", status: 201 });
+export async function createRun({ benchmarkToken, body, ip }: { benchmarkToken: string | null; body: unknown; ip: string }) {
+  return respond(async () => RunsService.createRun({ benchmarkToken, body, ip }), { message: "Run queued", status: 201 });
 }
 
 export async function getRun(id: string) {

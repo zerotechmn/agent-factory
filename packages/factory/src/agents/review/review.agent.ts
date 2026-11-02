@@ -38,6 +38,8 @@ Look for, in priority order:
 
 ${ctx.designSystem === "zt" ? "This run uses the ZT Design System: also load the factory:zt-design-system skill and check the UI code against §13 (theme via ConfigProvider, no inline colours or pixel values), §5 (one primary button per view, destructive actions confirmed, actions hidden for roles that can never use them), §9 (loading, error and no-permission states on every screen) and §11 (copy and formats). Missing required states or confirmations are major.\n\n" : ""}For UI code (HTML, CSS, client JS), load the factory:web-interface-guidelines skill with the Skill tool first, and check the code against it using the severity it defines. Read the global stylesheet in full: one global rule (for example \`overflow-wrap: anywhere\` on body, or a missing \`min-width: 0\` on flex/grid children) can break text on every screen, so treat such rules as major. Report a handful of the most important violations with file references, not every instance of the same one.
 
+Use the librarian to check, not to guess: spec_trace a feature to see which criteria and tests cover it, and docs_search a library API before reporting it as misused.
+
 Only report real, specific problems with file references. Do not pad the list with minor nits; "blocking" must be true exactly when a blocker or major exists.
 
 ${jsonBlock("PRD (features, acceptance criteria, business rules, permissions)", slicePrd(ctx.handoffs.requirements, prdForReview))}

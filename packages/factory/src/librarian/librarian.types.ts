@@ -33,4 +33,14 @@ export type CatalogItem = {
   tags: string[];
 };
 
-export type QueryStat = { calls: number; stage: string; withHits: number };
+export type QueryStat = {
+  /** Knowledge the factory pushed (prompt or hook) that had content. */
+  auto: number;
+  /** Tool calls refused because the step's limit was reached. */
+  capped: number;
+  /** The agent's own tool calls. */
+  pulls: number;
+  stage: string;
+  /** Pulls that found something. */
+  withHits: number;
+};

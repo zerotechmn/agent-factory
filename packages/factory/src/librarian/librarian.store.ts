@@ -164,6 +164,22 @@ export function getDoc(chunkId: string): DocChunk | null {
   return row ? { body: row.body, id: row.chunk_id, library: row.library, title: row.title } : null;
 }
 
+/**
+ * Sections of one doc page (e.g. antd's date-picker page, react-router's
+ * use-navigate page), its API section first: what someone who just imported
+ * that component or hook most likely needs.
+ */
+export function pageSections(library: string, page: string, limit: number): DocChunk[] {
+  return db
+    .query<{ body: string; chunk_id: string; library: string; title: string }, [string, string, number]>(
+      `SELECT chunk_id, library, title, body FROM library_docs
+       WHERE library LIKE ? || '%' AND chunk_id LIKE '%/' || ? || '#%'
+       ORDER BY (chunk_id LIKE '%#api') DESC, id LIMIT ?`,
+    )
+    .all(library, page, limit)
+    .map((row) => ({ body: row.body, id: row.chunk_id, library: row.library, title: row.title }));
+}
+
 export function listLibraries(): string[] {
   return db.query<{ library: string }, []>("SELECT DISTINCT library FROM library_docs ORDER BY library").all().map((r) => r.library);
 }
@@ -191,6 +207,11 @@ export function searchCatalog(match: string, limit: number): CatalogItem[] {
     .map(toCatalogItem);
 }
 
+/** Names and summaries only: small enough to list in a prompt. */
+export function listCatalog(limit: number): Pick<CatalogItem, "name" | "summary">[] {
+  return db.query<{ name: string; summary: string }, [number]>("SELECT name, summary FROM library_catalog ORDER BY name LIMIT ?").all(limit);
+}
+
 export function getCatalogItem(name: string): CatalogItem | null {
   const row = db.query<RawCatalog, [string]>("SELECT * FROM library_catalog WHERE name = ?").get(name);
   return row ? toCatalogItem(row) : null;
@@ -209,14 +230,19 @@ export function logQuery(entry: { at: string; hits: number; query: string; runId
   );
 }
 
+/** Pulls are the agent's own tool calls; auto rows are what the factory pushed; "limit" rows are calls refused at the cap. */
 export function queryStats(runId: string): QueryStat[] {
   return db
-    .query<{ calls: number; stage: string; with_hits: number }, [string]>(
-      `SELECT stage, count(*) AS calls, count(*) FILTER (WHERE hits > 0) AS with_hits
+    .query<{ auto: number; capped: number; pulls: number; stage: string; with_hits: number }, [string]>(
+      `SELECT stage,
+              count(*) FILTER (WHERE tool NOT LIKE 'auto:%' AND tool <> 'limit') AS pulls,
+              count(*) FILTER (WHERE tool NOT LIKE 'auto:%' AND tool <> 'limit' AND hits > 0) AS with_hits,
+              count(*) FILTER (WHERE tool LIKE 'auto:%' AND hits > 0) AS auto,
+              count(*) FILTER (WHERE tool = 'limit') AS capped
        FROM library_queries WHERE run_id = ? GROUP BY stage ORDER BY min(id)`,
     )
     .all(runId)
-    .map((row) => ({ calls: row.calls, stage: row.stage, withHits: row.with_hits }));
+    .map((row) => ({ auto: row.auto, capped: row.capped, pulls: row.pulls, stage: row.stage, withHits: row.with_hits }));
 }
 
 function setIndexedHash(source: string, hash: string, at: string): void {

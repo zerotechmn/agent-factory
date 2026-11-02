@@ -22,11 +22,20 @@ const token = await loadOrCreateToken(env.TOKEN_FILE);
 
 const runIdSchema = z.string().regex(/^[a-z0-9]{10}$/);
 const buildSchema = z.object({ runId: runIdSchema });
-const runSchema = z.object({ port: z.number().int().min(1).max(65_535).default(8080), runId: runIdSchema });
-const checkSchema = z.object({ path: z.string().startsWith("/").max(500).default("/health"), runId: runIdSchema });
+/**
+ * "live" is the app people use (routed, persistent volume). "acceptance" is a
+ * throwaway copy of the same image for the factory's acceptance tests: not
+ * routed, fresh /data each start, so test data never reaches the live app.
+ */
+const instanceSchema = z.enum(["live", "acceptance"]).default("live");
+const runSchema = z.object({ instance: instanceSchema, port: z.number().int().min(1).max(65_535).default(8080), runId: runIdSchema });
+const checkSchema = z.object({ instance: instanceSchema, path: z.string().startsWith("/").max(500).default("/health"), runId: runIdSchema });
+const removeSchema = z.object({ instance: z.literal("acceptance"), runId: runIdSchema });
 
-const names = (runId: string) => ({
-  container: `factory-app-${runId}`,
+type Instance = z.infer<typeof instanceSchema>;
+
+const names = (runId: string, instance: Instance = "live") => ({
+  container: instance === "acceptance" ? `factory-app-${runId}-acc` : `factory-app-${runId}`,
   image: `factory-app-${runId}:latest`,
   volume: `factory-app-${runId}-data`,
 });
@@ -46,6 +55,7 @@ Bun.serve({
       if (pathname === "/run") return Response.json(await run(runSchema.parse(body)));
       if (pathname === "/check") return Response.json(await check(checkSchema.parse(body)));
       if (pathname === "/logs") return Response.json(await logs(buildSchema.parse(body)));
+      if (pathname === "/remove") return Response.json(await remove(removeSchema.parse(body)));
       return Response.json({ error: "Not found" }, { status: 404 });
     } catch (error) {
       const status = error instanceof z.ZodError ? 400 : 500;
@@ -64,27 +74,33 @@ async function build({ runId }: { runId: string }) {
   return { exitCode: result.exitCode, ok: result.exitCode === 0, output: tail(result.output, 150) };
 }
 
-async function run({ port, runId }: { port: number; runId: string }) {
-  const n = names(runId);
+async function run({ instance, port, runId }: { instance: Instance; port: number; runId: string }) {
+  const n = names(runId, instance);
   const host = `${runId}.apps.${env.BASE_DOMAIN}`;
   await docker(["rm", "-f", n.container], 60_000);
+  const placement =
+    instance === "acceptance"
+      ? ["--restart", "no", "--tmpfs", "/data:rw,size=256m", "--label", "factory.acceptance=true"]
+      : [
+          "--restart", "unless-stopped",
+          "-v", `${n.volume}:/data`,
+          "--label", "traefik.enable=true",
+          "--label", `traefik.http.routers.app-${runId}.rule=Host(\`${host}\`)`,
+          "--label", `traefik.http.routers.app-${runId}.entrypoints=web`,
+          "--label", `traefik.http.services.app-${runId}.loadbalancer.server.port=${port}`,
+        ];
   const result = await docker(
     [
       "run", "-d",
       "--name", n.container,
       "--network", env.APPS_NETWORK,
-      "--restart", "unless-stopped",
       "--memory", env.APP_MEMORY,
       "--cpus", env.APP_CPUS,
       "--pids-limit", "512",
       "-e", `PORT=${port}`,
-      "-v", `${n.volume}:/data`,
       "--label", "factory.app=true",
       "--label", `factory.port=${port}`,
-      "--label", "traefik.enable=true",
-      "--label", `traefik.http.routers.app-${runId}.rule=Host(\`${host}\`)`,
-      "--label", `traefik.http.routers.app-${runId}.entrypoints=web`,
-      "--label", `traefik.http.services.app-${runId}.loadbalancer.server.port=${port}`,
+      ...placement,
       n.image,
     ],
     60_000,
@@ -92,11 +108,17 @@ async function run({ port, runId }: { port: number; runId: string }) {
   if (result.exitCode !== 0) return { ok: false, output: tail(result.output, 50) };
   await Bun.sleep(3_000);
   const state = await docker(["inspect", "-f", "{{.State.Status}}", n.container], 10_000);
-  return { container: n.container, ok: state.output.trim() === "running", state: state.output.trim(), url: `http://${host}` };
+  const url = instance === "acceptance" ? `http://${n.container}:${port}` : `http://${host}`;
+  return { container: n.container, ok: state.output.trim() === "running", state: state.output.trim(), url };
 }
 
-async function check({ path, runId }: { path: string; runId: string }) {
-  const n = names(runId);
+async function remove({ instance, runId }: { instance: "acceptance"; runId: string }) {
+  const result = await docker(["rm", "-f", names(runId, instance).container], 60_000);
+  return { ok: result.exitCode === 0 };
+}
+
+async function check({ instance, path, runId }: { instance: Instance; path: string; runId: string }) {
+  const n = names(runId, instance);
   const portResult = await docker(["inspect", "-f", '{{index .Config.Labels "factory.port"}}', n.container], 10_000);
   if (portResult.exitCode !== 0) return { error: "Container not found; call docker_run first.", status: null };
   const port = portResult.output.trim();

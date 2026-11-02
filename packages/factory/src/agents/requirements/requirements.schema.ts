@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const STATE_KINDS = ["loading", "empty", "error", "not-found", "no-permission", "success", "other"] as const;
+
 /**
  * The PRD, following "PRD Template v2 (Feature + Screen)". The agent fills
  * this structure only; requirements.report.ts renders it in the template's
@@ -62,9 +64,18 @@ const screen = z.object({
   ),
   roles: z.array(z.string()).describe("Role names that can open this screen"),
   states: z
-    .array(z.object({ display: z.string().describe("What the user sees, including exact message text"), state: z.string() }))
-    .describe("At least Loading, Empty (for lists), Error and Not found where relevant"),
+    .array(
+      z.object({
+        display: z.string().describe("What the user sees, including exact message text"),
+        // Language-independent, so the factory can check states in Mongolian PRDs too.
+        kind: z.enum(STATE_KINDS),
+        state: z.string().describe("The state's name in the PRD's language"),
+      }),
+    )
+    .describe("At least loading and error; empty for lists; not-found and no-permission where relevant"),
 });
+
+export type StateKind = (typeof STATE_KINDS)[number];
 
 export const prdSchema = z.object({
   assumptions: z.array(z.string()).describe("§1.5 Technical and business assumptions"),

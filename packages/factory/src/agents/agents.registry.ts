@@ -1,8 +1,10 @@
 import type { AgentStageKey, DesignSystem } from "../pipeline/pipeline.types";
 import type { AgentDefinition } from "./agents.shared";
+import { acceptanceAgent } from "./acceptance/acceptance.agent";
 import { architectureAgent } from "./architecture/architecture.agent";
 import { deploymentAgent } from "./deployment/deployment.agent";
 import { developmentAgent } from "./development/development.agent";
+import { prdReviewAgent } from "./prd-review/prd-review.agent";
 import { requirementsAgent } from "./requirements/requirements.agent";
 import { researchAgent } from "./research/research.agent";
 import { reviewAgent } from "./review/review.agent";
@@ -12,9 +14,11 @@ import { ztUiDesignAgent } from "./ui-design/ui-design-zt.agent";
 import { uiDesignAgent } from "./ui-design/ui-design.agent";
 
 export const AGENTS: Record<AgentStageKey, AgentDefinition> = {
+  acceptance: acceptanceAgent as AgentDefinition,
   architecture: architectureAgent,
   deployment: deploymentAgent,
   development: developmentAgent,
+  prdReview: prdReviewAgent as AgentDefinition,
   requirements: requirementsAgent,
   research: researchAgent,
   review: reviewAgent,

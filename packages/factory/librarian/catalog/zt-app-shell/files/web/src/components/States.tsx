@@ -1,53 +1,81 @@
-import React, { useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { Alert, Breadcrumb, Button, Flex, Result, Typography } from 'antd';
-// @ts-ignore shared JS module
-import { NO_PERMISSION } from '../../../shared/access.js';
+import { Alert, Breadcrumb, Button, Flex, Result, Typography } from "antd";
+import { useEffect, type ReactNode } from "react";
+import { Link } from "react-router-dom";
+
+import { APP_NAME, COPY } from "../app.config";
 
 export function usePageTitle(title: string) {
   useEffect(() => {
-    document.title = `${title} · Wheels2Go`;
+    document.title = `${title} · ${APP_NAME}`;
   }, [title]);
 }
 
 type Crumb = { title: string; to?: string };
-export function PageHeader({ title, crumbs, extra, tag }: { title: string; crumbs?: Crumb[]; extra?: React.ReactNode; tag?: React.ReactNode }) {
+
+/** ZT §2 page header: Breadcrumb → one Title level 3 (with an optional status Tag) → actions on the right. */
+export function PageHeader({ crumbs, extra, tag, title }: { crumbs?: Crumb[]; extra?: ReactNode; tag?: ReactNode; title: string }) {
   usePageTitle(title);
   return (
-    <div className="w2g-page-header">
-      {crumbs && crumbs.length > 0 && (
-        <Breadcrumb items={crumbs.map((c) => ({ title: c.to ? <Link to={c.to}>{c.title}</Link> : c.title }))} />
-      )}
-      <Flex justify="space-between" align="center" wrap gap="middle">
-        <Flex align="center" gap="small" wrap className="w2g-minw0">
-          <Typography.Title level={3} className="w2g-title">{title}</Typography.Title>
+    <div className="zt-page-header">
+      {crumbs && crumbs.length > 0 && <Breadcrumb items={crumbs.map((c) => ({ title: c.to ? <Link to={c.to}>{c.title}</Link> : c.title }))} />}
+      <Flex align="center" gap="middle" justify="space-between" wrap>
+        <Flex align="center" className="zt-minw0" gap="small" wrap>
+          <Typography.Title className="zt-title" level={3}>
+            {title}
+          </Typography.Title>
           {tag}
         </Flex>
-        {extra && <Flex gap="small" wrap>{extra}</Flex>}
+        {extra && (
+          <Flex gap="small" wrap>
+            {extra}
+          </Flex>
+        )}
       </Flex>
     </div>
   );
 }
 
-export function NoPermission({ message = NO_PERMISSION }: { message?: string }) {
-  usePageTitle('No permission');
+/** ZT §9 no-permission state. */
+export function NoPermission({ message = COPY.noPermission, onBack }: { message?: string; onBack?: () => void }) {
+  usePageTitle(COPY.noPermissionTitle);
   return (
-    <Result status="403" title="No permission" subTitle={<span data-testid="no-permission">{message}</span>}
-      extra={<Link to="/"><Button type="primary">Go to my home page</Button></Link>} />
+    <Result
+      extra={
+        onBack ? (
+          <Button onClick={onBack} type="primary">
+            {COPY.backHome}
+          </Button>
+        ) : (
+          <Link to="/">
+            <Button type="primary">{COPY.backHome}</Button>
+          </Link>
+        )
+      }
+      status="403"
+      subTitle={message}
+      title={COPY.noPermissionTitle}
+    />
   );
 }
 
-export function NotFoundPage({ message = 'This page does not exist.', backTo = '/', backLabel = 'Go to my home page' }: { message?: string; backTo?: string; backLabel?: string }) {
-  usePageTitle('Not found');
+/** ZT §9 not-found state, with a link back (to the list, for a missing record). */
+export function NotFoundPage({ backLabel = COPY.backHome, backTo = "/", message = COPY.notFound }: { backLabel?: string; backTo?: string; message?: string }) {
+  usePageTitle(COPY.notFoundTitle);
   return (
-    <Result status="404" title="Not found" subTitle={<span data-testid="not-found">{message}</span>}
-      extra={<Link to={backTo}><Button type="primary">{backLabel}</Button></Link>} />
+    <Result
+      extra={
+        <Link to={backTo}>
+          <Button type="primary">{backLabel}</Button>
+        </Link>
+      }
+      status="404"
+      subTitle={message}
+      title={COPY.notFoundTitle}
+    />
   );
 }
 
+/** ZT §9 section load error with a retry. A whole page that failed uses Result status="error" instead. */
 export function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return (
-    <Alert type="error" showIcon role="alert" data-testid="load-error" title={message}
-      action={<Button onClick={onRetry}>Try again</Button>} />
-  );
+  return <Alert action={<Button onClick={onRetry}>{COPY.retry}</Button>} role="alert" showIcon title={message} type="error" />;
 }

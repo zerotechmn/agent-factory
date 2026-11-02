@@ -1,0 +1,32 @@
+[
+  {
+    "designSystem": "custom",
+    "id": "car-marketplace",
+    "prompt": "Wheels2Go: a peer-to-peer car rental marketplace. Owners list cars with photos, a daily price and a cleaning fee; renters browse the catalogue with filters (city, seats, price), see a car's detail page and request a booking for a date range. The total is days × daily price + cleaning fee. Owners approve or decline requests; renters see their bookings with status (Pending, Confirmed, Declined, Cancelled) and can cancel a pending booking. Owners see an earnings summary of completed rentals. Two roles, Owner and Renter, switchable in a demo header."
+  },
+  {
+    "designSystem": "zt",
+    "id": "order-approval-mn",
+    "prompt": "Худалдан авалтын захиалгын батлах систем. Ажилтан бараа, тоо ширхэг, нэгж үнэ, шалтгаантай захиалга үүсгэнэ. 1,000,000₮-өөс бага захиалгыг Менежер батална, түүнээс дээшхийг Менежер батласны дараа Захирал эцэслэн батална. Татгалзахдаа шалтгаан заавал бичнэ. Нягтлан зөвхөн батлагдсан захиалгуудыг харж, төлөгдсөн гэж тэмдэглэнэ. Захиалгын жагсаалт төлөв, огноо, дүнгээр шүүгдэнэ. Дөрвөн үүрэг: Ажилтан, Менежер, Захирал, Нягтлан."
+  },
+  {
+    "designSystem": "zt",
+    "id": "inventory-dashboard",
+    "prompt": "An inventory tracker for a small warehouse. Staff record products (SKU, name, category, unit cost, reorder level) and stock movements (receipt, issue, adjustment with a reason). Current stock per product is the sum of movements and can never go below zero. A dashboard shows total stock value, products below their reorder level, and movements over the last 30 days by type. A report lists stock value by category. Roles: Staff can record movements; Manager can also edit products and see the reports."
+  },
+  {
+    "designSystem": "custom",
+    "id": "habit-tracker",
+    "prompt": "A habit tracker where I can add habits with a name and a target of days per week, tick them off each day, and see a weekly view with the current streak for each habit. Habits can be archived and restored. No accounts: a single user."
+  },
+  {
+    "designSystem": "zt",
+    "id": "leave-requests",
+    "prompt": "An HR leave request system. Employees request annual or sick leave for a date range with a comment; working days exclude weekends. Each employee has 15 days of annual leave per year and cannot request more than their remaining balance. Their manager approves or rejects with a comment; HR sees all requests and every employee's remaining balance, and can cancel an approved request, which returns the days. Roles: Employee, Manager, HR."
+  },
+  {
+    "designSystem": "custom",
+    "id": "recipe-box",
+    "prompt": "A recipe box where I can save recipes with a title, photo URL, ingredients (name, quantity, unit), steps and tags; search by title or ingredient, filter by tag, mark favourites, and scale a recipe's ingredient quantities to a different number of servings. No accounts: a single user."
+  }
+]

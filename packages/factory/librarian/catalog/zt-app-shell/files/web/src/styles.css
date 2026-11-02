@@ -1,0 +1,37 @@
+/* Shell layout only. Colours and sizes come from antd's CSS variables (ZT tokens); no hard-coded colours. */
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--ant-color-bg-layout, #f5f5f5); touch-action: manipulation; }
+
+/* Flex and grid children default to min-width: auto, which makes long text overflow instead of wrapping. */
+.zt-minw0 { min-width: 0; }
+.zt-shell { min-height: 100vh; }
+.zt-title { margin: 0 !important; text-wrap: balance; overflow-wrap: break-word; min-width: 0; }
+
+.zt-skip { position: absolute; left: -9999px; top: 0; z-index: 1000; padding: var(--ant-padding-xs, 8px) var(--ant-padding, 16px); background: var(--ant-color-bg-container, #fff); }
+.zt-skip:focus { left: var(--ant-margin, 16px); top: var(--ant-margin, 16px); }
+
+.zt-sider { border-right: 1px solid var(--ant-color-border-secondary, #f0f0f0); }
+.zt-sider .ant-menu { border-inline-end: none !important; }
+.zt-logo { display: flex; align-items: center; justify-content: center; height: 64px; }
+.zt-logo-text { font-size: var(--ant-font-size-lg, 16px); white-space: nowrap; }
+.zt-logo-inline { white-space: nowrap; }
+
+.zt-header { display: flex; align-items: center; justify-content: space-between; gap: var(--ant-margin-xs, 8px);
+  padding: 0 var(--ant-padding-lg, 24px) !important; background: var(--ant-color-bg-container, #fff) !important;
+  border-bottom: 1px solid var(--ant-color-border-secondary, #f0f0f0); position: sticky; top: 0; z-index: 10; }
+.zt-user-btn { display: inline-flex !important; align-items: center; max-width: 40vw; min-width: 0; }
+.zt-user-name { max-width: 100%; min-width: 0; }
+
+.zt-content { padding: var(--ant-padding-lg, 24px); min-width: 0; outline: none; }
+.zt-page-header { margin-bottom: var(--ant-margin, 16px); display: flex; flex-direction: column; gap: var(--ant-margin-xs, 8px); }
+/* ZT §2: forms and detail bodies stop at 960 px; lists and dashboards use the full width. */
+.zt-narrow { max-width: 960px; }
+
+@media (max-width: 767px) {
+  .zt-content { padding: var(--ant-padding, 16px); }
+  .zt-header { padding: 0 var(--ant-padding-xs, 8px) !important; }
+  .zt-touch { min-width: 44px; min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

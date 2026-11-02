@@ -21,8 +21,8 @@ The API key is the only required setting. Everything else in `.env.example` is o
 ## Pipeline
 
 ```
-research ─► requirements ─► ┌ test cases   ┐ ─► development
-                            │ architecture │        │
+research ─► requirements ─► PRD gates ─► ┌ test cases   ┐ ─► ┌ development
+                            │ architecture │    └ acceptance tests (independent tester)
                             └ UI/UX design ┘        │
      ┌────────────────────────────────────────────┘
      ▼
@@ -30,7 +30,7 @@ research ─► requirements ─► ┌ test cases   ┐ ─► development
      │ otherwise, up to 2 rounds:
      ├─ container won't build/start/answer → deployment repair agent
      ├─ broken layout in the browser         → fix (with the exact elements)
-     ├─ tests fail                         → test triage agent
+     ├─ tests (or blocking acceptance) fail  → test triage agent
      └─ app bugs, blocking review          → fix (resumes the developer's session)
         then verify ∥ re-review (diff only) again
 ```
@@ -39,11 +39,13 @@ research ─► requirements ─► ┌ test cases   ┐ ─► development
 |---|---|---|---|---|
 | Research | agent | Sonnet 5.5 | stage folder + web search/fetch | comparable products, common features, UI patterns, pitfalls, suggested MVP scope, sources |
 | Requirements | agent | Sonnet 5.5 | stage folder | a PRD in the Feature + Screen template: features with Given/When/Then AC, business rules, screens, entities, roles and permissions |
+| PRD check | agent | Sonnet 5.5 | stage folder | whether the PRD covers every request in the customer's prompt (and nothing unasked for). See *PRD gates* |
 | Test cases | agent | Sonnet 5.5 | stage folder | Given/When/Then cases mapped to criteria, smoke checks |
-| Architecture | agent | Opus 5.5 | stage folder | stack, file tree, data model, API, commands, stylesheet location, Dockerfile plan |
+| Architecture | agent | Opus 5.5 | stage folder | stack, file tree, data model, the API contract (request, response and errors per endpoint, auth per role, screen routes), commands, stylesheet location, Dockerfile plan |
 | UI/UX design | agent | Opus 5.5 | stage folder | ZT: a template, components, actions and states per screen (`screens.json` contract). Custom: visual direction, design tokens, components, wireframes. See *Design systems* |
 | Development | agent | Opus 5.5 | `workspace/` | the app, its tests (written test-first) and a Dockerfile |
-| Verify | **code** | – | `workspace/` + deployer + headless Chromium | install + test suite, image build, container start, `/health`, GET smoke checks, and browser checks of every screen. Costs $0; a green verify *is* the deployment |
+| Acceptance tests | agent, in parallel with development | Sonnet 5.5 | stage folder | black-box tests of the test plan, from the architecture's API contract only. See *Acceptance tests* |
+| Verify | **code** | – | `workspace/` + deployer + headless Chromium | install + test suite, image build, container start, `/health`, GET smoke checks, browser checks of every screen, and the independent acceptance tests against a throwaway copy of the app. Costs $0; a green verify *is* the deployment |
 | Review | agent | Sonnet 5.5 | `workspace/` (read-only) | findings by severity, criterion coverage; re-reviews read only the diff |
 | Test triage | agent, on failure | Sonnet 5.5 | `workspace/` (test files only) | fixes broken tests, reports real app bugs |
 | Deployment repair | agent, on failure | Sonnet 5.5 | `workspace/` + Docker tools | fixed Dockerfile/start config, running container |
@@ -61,6 +63,20 @@ How the design saves money and time:
 Research and UI/UX design are optional: if research fails, requirements are written from the prompt alone; if UI/UX design fails, the developer picks a visual direction itself. The agents can use any web stack that runs on the runtimes in the factory image (Node, Bun, Python, Go). Every app has to meet one contract: a single Dockerfile, listening on `$PORT`, with `GET /health` returning 200.
 
 Configuration lives in `packages/factory/src/pipeline/pipeline.constants.ts`. That file sets each stage's model, skills, budget, effort, turn limit and timeout. Agent prompts and output schemas are in `packages/factory/src/agents/<stage>/`, and the verify gate is `packages/factory/src/pipeline/pipeline.gate.ts`.
+
+### Acceptance tests
+
+Before this, the developer wrote both the code and its tests, so "tests pass" meant it had graded its own work: misread a rule, and test and code agree on the wrong behaviour. Now an **independent acceptance tester** (Sonnet, about $0.6) turns the test plan into black-box tests while the developer builds, from the architecture's contract alone. The contract covers each endpoint's request, response and errors, how to act as each role, and screen routes. The tester never sees the code.
+
+- **Stack-independent:** tests are plain `node:test` files in `acceptance/`, using a factory harness (`acceptance-harness/harness.mjs`). `api(method, path, { body, role })` handles each role's auth (header or login session), and `withPage(fn, { role })` runs a Playwright browser for the few flows that need one. Each test is named after its test case (`TC-3: …`).
+- **Checked before use:** every file must pass `node --check`. If one fails, the tester's session is resumed once to fix it, and files that still don't parse are left out.
+- **The developer can read them but never change them.** After every development, fix and deployment-repair stage, the factory restores anything changed under `acceptance/` and notes it in `SUMMARY.md`. Test triage may fix a test that contradicts the contract, never to match the app.
+- **They run against a throwaway copy of the app.** It uses the same image, has no route and starts with a fresh `/data` (the deployer's `acceptance` instance), so test data never reaches the live app. The container is removed afterwards.
+- **`ACCEPTANCE_MODE`:**
+  - `advisory` (default): results appear in the verify report, on the task board (they decide test case cards) and in `SUMMARY.md`, without failing the build.
+  - `blocking`: failures go to test triage and a fix round like any failed test.
+
+  Switch to blocking once the benchmark shows the tests are reliable.
 
 ### Browser checks
 
@@ -108,6 +124,19 @@ The requirements agent writes a PRD following *PRD Template v2 (Feature + Screen
 - **Sections that need a human process are omitted:** approvers, success metrics, deployment, UAT, sign-off, and real external integrations (apps are self-contained). Open questions become decisions the agent took, with its reasons.
 - The PRD is written in the language of the user's prompt.
 
+### PRD gates
+
+Everything after the PRD (about $4.50 of design and development) is built from it, so a PRD that misses or misreads the request makes every later gate pass on the wrong app. Four checks run before the parallel stages start:
+
+| Gate | Checks | Cost |
+|---|---|---|
+| Cross-references (code) | ID formats, duplicates, every reference resolves | Free |
+| Testability (code) | Every feature has a positive acceptance criterion, and a negative one when it uses business rules; every rule has a worked example; every screen has loading and error states (screen states carry a language-independent `kind`, so this works for Mongolian PRDs) | Free |
+| Scope (code) | At most 8 features, 10 screens and 50 acceptance criteria, about what one development session builds well (past runs: 6–7, 6–8, 31–41) | Free |
+| Prompt coverage (`PRD check`, Sonnet) | Splits the customer's prompt into its requests, quoting their words, and marks each covered, partial, missing or deliberately out of scope; flags features nobody asked for | About $0.05–0.10, +30–60 s |
+
+Problems get **one** resumed repair of the requirements session (about $0.10–0.30). Cross-reference problems are always repaired. The other three follow `PRD_GATES`: `advisory` (default) only reports them, in the PRD report, the PRD check report and `SUMMARY.md`; `repair` sends them back to the requirements agent too. Nothing here stops a run.
+
 ### Skills
 
 Agents use proven engineering skills, vendored in `packages/factory/skills-plugin/` and loaded as a local plugin. Each agent sees only its own skills.
@@ -152,17 +181,53 @@ Agents share a **librarian**, an in-process MCP server (`packages/factory/src/li
 |---|---|---|
 | `spec_get`, `spec_trace` | This run's PRD, test plan and architecture by id (F-03, AC-F03-02, S-02, BRL-01, TC-7, an endpoint's operationId), and what each item links to, with task board status | development, fix, review, test triage |
 | `lessons_search` | Problems earlier runs hit, their root causes and the fixes that made verify pass | architecture, development, fix, test triage, deployment repair |
-| `docs_search`, `docs_read` | Version-pinned framework docs: antd@6, react-router@6, vite@6, vitest@3, better-sqlite3@11, node:test@22 | architecture, UI/UX design, development, fix, review |
+| `docs_search`, `docs_read` | Version-pinned docs: antd@6, `@ant-design/icons`@6 (every real icon name), react-router@6, vite@6, vitest@3, express@4, better-sqlite3@11, dayjs@1, supertest@7, node:test@22, and the ZT design system by section | architecture, UI/UX design, development, fix, review |
 | `catalog_search`, `catalog_get` | Reviewed modules from earlier green apps; `catalog_get` copies one into the workspace and never overwrites files | architecture, development |
 
-- **Lessons cost no extra agent call.** Fix, test triage and deployment repair agents add `lessons` to the output they already return. The factory stores a lesson only after a later verify (or review) shows that check now passes. Lessons whose check still fails are dropped. A lesson seen again in another run is counted, not duplicated. The development agent's first build gets the 5 most frequent lessons for its design system in its prompt.
+The acceptance tester gets no librarian on purpose: it works from the architecture's contract alone.
+
+**Push where the factory knows the need, pull where only the agent does.** Asking costs a turn, and agents rarely ask, so the factory hands knowledge over itself whenever it can tell what's needed. Pushes cost no extra turn:
+
+| When | What the factory hands over |
+|---|---|
+| Architecture starts | The documented libraries and their majors, with "prefer these and pin the major" (so the developer's docs match its code), the catalog list, and the top 3 container lessons |
+| First build starts | The top 5 lessons ranked by this run's stack (Express, antd, Vite… from the architecture), and the catalog list |
+| Fix, test triage or deployment repair starts | Up to 3 lessons matching the exact failure (failed steps plus the meaningful log lines, with paths and numbers stripped) |
+| A command fails mid-session | Up to 2 matching lessons, attached to that command's output with an SDK `PostToolUse` hook |
+| A file first imports a documented library | The ids of that component's or hook's doc sections (e.g. `antd@6/table#api`), attached the same way |
+
+Hook notes start with "Librarian:", are capped at 1,200 characters, fire at most once per distinct failure or import, and at most 6 times per session. Pulls follow concrete rules in the system prompt: search lessons before debugging, docs before using a library API not yet used in that step, the catalog before writing an app shell, page or Dockerfile, and spec ids before relying on them. Each tool result names the next useful tool.
+
+- **Lessons cost no extra agent call.** Fix, test triage and deployment repair agents add `lessons` to the output they already return. The factory stores a lesson only after a later verify (or review) shows that check now passes. Lessons whose check still fails are dropped. A lesson seen again in another run is counted, not duplicated.
 - **Lessons hold engineering knowledge only.** They are shared with every future run, so the schema asks for general wording, and lessons that quote five or more consecutive words of the user's prompt are skipped. Set `LIBRARIAN_LESSONS=off` to stop storing new ones.
-- **Docs** are fetched at pinned refs with `bun packages/factory/scripts/librarian-sync-docs.ts`, committed under `packages/factory/librarian/docs/` (sources and licences in `SOURCES.md`), and split into sections small enough to return whole. The index rebuilds on startup only when the files change.
+- **Docs** are fetched at pinned refs with `bun packages/factory/scripts/librarian-sync-docs.ts [library…]`, committed under `packages/factory/librarian/docs/` (sources and licences in `SOURCES.md`), and split into sections small enough to return whole. The ZT design system skill is indexed from `skills-plugin/` as library `zt-design-system`. The index rebuilds on startup only when the files change. Doc search matches word prefixes ("search" finds `SearchOutlined`). Lesson search matches whole words only, so loose matches don't reach a repair prompt.
 - **The catalog only contains reviewed code.** `bun packages/factory/scripts/librarian-promote.ts <runId> <name> <path>…` copies files from a fully `deployed` run into `packages/factory/librarian/catalog/<name>/` as a draft. Drafts (`Status: draft` in the README) are not indexed until someone makes the code generic, writes the README and removes that line.
-- **Cost guardrails.** Every call is one more agent turn, so results are capped at 3,000 characters and each step has a call limit (20 for development, 8 for the others). The system prompt tells agents to use the librarian only when unsure and to batch lookups. Each stage's tool list is fixed, which keeps the prompt cache warm. Lookups themselves take under a millisecond (SQLite FTS5).
-- **Measuring it.** Every query is logged in `library_queries`, and `SUMMARY.md` shows queries and hits per stage. Set `LIBRARIAN=off` to run the same prompts without it and compare fix rounds and cost.
+- **Cost guardrails.** Every call is one more agent turn, so results are capped at 3,000 characters and each step has a call limit (20 for development, 8 for the others). The system prompt asks agents to batch lookups in one turn. Each stage's tool list is fixed, which keeps the prompt cache warm. Lookups themselves take under a millisecond (SQLite FTS5).
+- **Seeing it work.** Every lookup and push is logged in `library_queries`: `auto:lessons` and `auto:catalog` for prompt pushes, `auto:hook-lessons` and `auto:hook-docs` for hook notes, and `limit` when a call hit the step's cap. The Librarian table in `SUMMARY.md` shows per stage what agents asked, how many asks found something, how many pushes had content, and how often the cap was hit. Set `LIBRARIAN=off` to run without it.
 
 Tables: `library_lessons`, `library_docs`, `library_catalog` (each with an FTS5 index), `library_index_meta`, `library_queries`.
+
+## Benchmark
+
+Factory changes are judged on a fixed set of 6 varied prompts (`packages/factory/benchmark/prompts.json`), not single runs:
+- a car rental marketplace
+- a Mongolian order-approval workflow with 4 roles
+- an inventory dashboard
+- a habit tracker
+- HR leave requests
+- a recipe box
+
+```bash
+# from the repo root; BENCHMARK_TOKEN (16+ chars) set in .env for the factory and in this shell
+bun packages/factory/scripts/benchmark.ts run baseline-v1          # real spend: about $35, runs one at a time
+bun packages/factory/scripts/benchmark.ts report next baseline-v1  # compare two benchmarks
+```
+
+`run` submits the prompts through the API and waits for them. The token skips the per-IP run limit, but not the daily spend cap. `report` reads the database and run folders without changing them, and writes `data/benchmarks/<label>.md`:
+- deployed count and acceptance pass rate (independent)
+- verify passed first time, and fix rounds
+- mean and total cost, run time, and development time
+- per run: acceptance coverage, blocker and major review findings, librarian calls
 
 ## Budget and early stop
 
@@ -209,7 +274,7 @@ Agents receive only `handoff.json` from earlier stages, plus the workspace. They
 
 ```sh
 bun install
-bun test                        # budget allocator tests
+bun run test                    # factory unit tests, against a throwaway database (bare `bun test` at the root is refused)
 bun run typecheck
 ANTHROPIC_API_KEY=… bun packages/factory/src/server.ts   # API on :4000 (deployment needs the deployer)
 cd packages/portal && bun run dev                         # portal on :5173, proxies /api

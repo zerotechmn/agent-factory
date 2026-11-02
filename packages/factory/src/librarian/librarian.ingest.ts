@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 
-import { LIBRARY_DIR, RESULT_MAX_CHARS } from "./librarian.constants";
+import { EXTRA_DOC_FILES, LIBRARY_DIR, RESULT_MAX_CHARS } from "./librarian.constants";
 import * as LibrarianStore from "./librarian.store";
 import type { CatalogItem, DocChunk } from "./librarian.types";
 
@@ -16,11 +16,14 @@ const CATALOG_FILE_MAX_BYTES = 50_000;
  * changed since the last start. Hashing the files is cheap; re-chunking a few
  * MB of docs on every boot is not worth it.
  */
-export async function indexLibrary(root = LIBRARY_DIR): Promise<{ catalog: number | null; docs: number | null }> {
+export async function indexLibrary(
+  root = LIBRARY_DIR,
+  extras = EXTRA_DOC_FILES,
+): Promise<{ catalog: number | null; docs: number | null }> {
   const at = new Date().toISOString();
   const result: { catalog: number | null; docs: number | null } = { catalog: null, docs: null };
 
-  const docFiles = await readTree(join(root, "docs"), (path) => path.endsWith(".md"));
+  const docFiles = [...(await readTree(join(root, "docs"), (path) => path.endsWith(".md") && path !== "SOURCES.md")), ...(await readExtras(extras))];
   const docsHash = hashFiles(docFiles);
   if (LibrarianStore.indexedHash("docs") !== docsHash) {
     const chunks = docFiles.flatMap((file) => chunkMarkdown(file.path, file.content));
@@ -57,7 +60,8 @@ export function chunkMarkdown(path: string, markdown: string): DocChunk[] {
     const heading = !inFence ? line.match(/^#{1,3}\s+(.+)/) : null;
     if (heading) {
       sections.push(current);
-      current = { heading: heading[1]!.trim(), lines: [] };
+      // Doc sites append anchors like "{#faq-state}" to headings; they only add noise to titles and ids.
+      current = { heading: heading[1]!.replace(/\s*\{#[^}]*\}\s*$/, "").trim(), lines: [] };
       continue;
     }
     current.lines.push(line);
@@ -164,6 +168,14 @@ async function readTree(dir: string, include: (path: string) => boolean): Promis
     files.push({ content: await readFile(full, "utf8"), path });
   }
   return files.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+async function readExtras(extras: { file: string; path: string }[]): Promise<{ content: string; path: string }[]> {
+  const files: { content: string; path: string }[] = [];
+  for (const extra of extras) {
+    if (existsSync(extra.file)) files.push({ content: await readFile(extra.file, "utf8"), path: extra.path });
+  }
+  return files;
 }
 
 function hashFiles(files: { content: string; path: string }[]): string {

@@ -50,6 +50,7 @@ export function librarianMcpServer({
   const run = async (name: string, query: string, body: () => Promise<{ hits: number; text: string }> | { hits: number; text: string }) => {
     calls += 1;
     if (calls > limit) {
+      LibrarianStore.logQuery({ at: new Date().toISOString(), hits: 0, query, runId, stage, tool: "limit" });
       return reply(`Librarian limit reached (${limit} calls for this step). Continue with what you already have.`, false);
     }
     try {
@@ -76,7 +77,8 @@ export function librarianMcpServer({
             hits: items.length,
             text: items
               .map((i) => `- ${i.name}: ${i.summary}${i.tags.length ? ` [${i.tags.join(", ")}]` : ""} (${i.files.length} files)`)
-              .join("\n"),
+              .join("\n")
+              .concat("\n\nCopy one into the workspace with catalog_get."),
           };
         }),
     ),
@@ -111,7 +113,9 @@ export function librarianMcpServer({
       ({ library, query }) =>
         run("docs_search", `${library ? `${library}: ` : ""}${query}`, () => {
           const chunks = LibrarianService.searchDocs(query, library ?? null);
-          if (chunks.length) return { hits: chunks.length, text: LibrarianService.formatDocHits(chunks) };
+          if (chunks.length) {
+            return { hits: chunks.length, text: `${LibrarianService.formatDocHits(chunks)}\n\nOpen a whole section with docs_read <id>.` };
+          }
           const libraries = LibrarianStore.listLibraries();
           return { hits: 0, text: `No matching docs.${libraries.length ? ` Libraries available: ${libraries.join(", ")}.` : " No docs are installed."}` };
         }),
@@ -147,7 +151,9 @@ export function librarianMcpServer({
       ({ id }) =>
         run("spec_get", id, () => {
           const hit = lookupSpec(handoffs, id);
-          return hit ? { hits: 1, text: `${hit.kind} ${hit.id}\n${JSON.stringify(hit.item)}` } : { hits: 0, text: `Nothing with id "${id}" in this run's spec.` };
+          return hit
+            ? { hits: 1, text: `${hit.kind} ${hit.id}\n${JSON.stringify(hit.item)}\n\nspec_trace ${hit.id} shows what it links to.` }
+            : { hits: 0, text: `Nothing with id "${id}" in this run's spec.` };
         }),
     ),
     tool(

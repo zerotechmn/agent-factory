@@ -1,7 +1,16 @@
 import type { GateResult } from "../pipeline/pipeline.gate";
 import type { DesignSystem } from "../pipeline/pipeline.types";
 import { config } from "../lib/config";
-import { LESSON_FIELD_MAX_CHARS, PROMPT_LESSON_LIMIT, RESULT_MAX_CHARS, SEARCH_LIMIT } from "./librarian.constants";
+import {
+  FAILURE_LESSON_LIMIT,
+  LESSON_FIELD_MAX_CHARS,
+  PROMPT_LESSON_LIMIT,
+  RANKING_POOL,
+  RESULT_MAX_CHARS,
+  SEARCH_LIMIT,
+  STACK_TERMS,
+  type LessonStep,
+} from "./librarian.constants";
 import * as LibrarianStore from "./librarian.store";
 import type { CatalogItem, DocChunk, Lesson, LessonInput } from "./librarian.types";
 
@@ -9,13 +18,16 @@ import type { CatalogItem, DocChunk, Lesson, LessonInput } from "./librarian.typ
 export type PendingLesson = LessonInput & { reportedBy: string };
 
 /**
- * Turns free text into an FTS5 query: every word becomes a quoted term, OR'd,
- * so punctuation in an agent's query ("antd Table: pagination?") can never be
- * read as FTS syntax. bm25 then ranks items matching more words first.
+ * Turns free text into an FTS5 query: every word becomes a quoted prefix
+ * term, OR'd, so punctuation in an agent's query ("antd Table: pagination?")
+ * can never be read as FTS syntax, and "search" still finds SearchOutlined or
+ * "relative" finds relativeTime. bm25 then ranks items matching more words first.
+ * Lessons use exact words: a prefix like "use" matching "used" pushes
+ * unrelated lessons into a repair prompt.
  */
-export function ftsQuery(text: string): string | null {
-  const words = [...new Set(text.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [])].filter((w) => w.length >= 2).slice(0, 12);
-  return words.length ? words.map((w) => `"${w}"`).join(" OR ") : null;
+export function ftsQuery(text: string, { exact = false, maxWords = 12 }: { exact?: boolean; maxWords?: number } = {}): string | null {
+  const words = [...new Set(text.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? [])].filter((w) => w.length >= 2).slice(0, maxWords);
+  return words.length ? words.map((w) => (exact ? `"${w}"` : `"${w}"*`)).join(" OR ") : null;
 }
 
 export function clip(text: string, max = RESULT_MAX_CHARS): string {
@@ -106,12 +118,108 @@ export function recordLessons({
 }
 
 export function searchLessons(query: string): Lesson[] {
-  const match = ftsQuery(query);
+  const match = ftsQuery(query, { exact: true });
   return match ? LibrarianStore.searchLessons(match, SEARCH_LIMIT) : [];
 }
 
 export function topLessons(designSystem: DesignSystem): Lesson[] {
   return LibrarianStore.topLessons(designSystem, PROMPT_LESSON_LIMIT);
+}
+
+/**
+ * Lessons for this run's stack first: the pool is the design system's most
+ * seen lessons, re-ordered by how many of the stack's technologies they are
+ * tagged with, so an Express/antd run sees Express/antd traps before generic ones.
+ */
+export function rankedLessons({
+  designSystem,
+  limit = PROMPT_LESSON_LIMIT,
+  steps,
+  tags,
+}: {
+  designSystem: DesignSystem;
+  limit?: number;
+  steps?: LessonStep[];
+  tags: string[];
+}): Lesson[] {
+  const wanted = new Set(tags);
+  return LibrarianStore.topLessons(designSystem, RANKING_POOL)
+    .filter((lesson) => !steps || steps.includes(lesson.step))
+    .map((lesson, order) => ({ lesson, order, score: lesson.tags.filter((tag) => wanted.has(tag)).length }))
+    .sort((a, b) => b.score - a.score || a.order - b.order)
+    .slice(0, limit)
+    .map(({ lesson }) => lesson);
+}
+
+/** Technologies named in the architecture's stack, in the vocabulary lesson tags use. */
+export function stackTags(architecture: unknown): string[] {
+  const stack = (architecture as { stack?: Record<string, unknown> } | null)?.stack;
+  if (!stack || typeof stack !== "object") return [];
+  const text = Object.values(stack).filter((v) => typeof v === "string").join(" ").toLowerCase();
+  return STACK_TERMS.filter((term) => new RegExp(`(^|[^a-z0-9])${escapeRegExp(term)}([^a-z0-9]|$)`).test(text));
+}
+
+const ERROR_LINE =
+  /\b(error|errors|fail|failed|failing|not ok|expected|assert\w*|cannot|unable|exception|timed? ?out|refused|enoent|eaddrinuse|not found|is not a function|is not defined|undefined|overflow|split|violation)\b/i;
+
+/**
+ * The lines of a log that say what went wrong, with what makes them unique to
+ * this app (paths, numbers, ids, quoted values) removed, so they match lessons
+ * written about other apps with the same problem.
+ */
+export function errorLines(output: string, max = 8): string[] {
+  const lines = output
+    .split("\n")
+    .filter((line) => ERROR_LINE.test(line))
+    .map((line) =>
+      line
+        .replace(/\S*[/\\]\S+/g, " ")
+        .replace(/["'`][^"'`]{0,80}["'`]/g, " ")
+        .replace(/\b[0-9a-f]{7,}\b|\d+(\.\d+)?/gi, " ")
+        .replace(/\s+/g, " ")
+        .trim(),
+    )
+    .filter((line) => line.length >= 6);
+  return [...new Set(lines)].slice(0, max);
+}
+
+/** Search text for a verify failure: the failed steps, then the meaningful lines of their logs. */
+export function failureQuery(gate: Pick<GateResult, "failedSteps" | "logs">): string {
+  const lines = gate.failedSteps.flatMap((step) => errorLines(gate.logs[step] ?? "", 4));
+  return [...gate.failedSteps, ...lines].join(" ");
+}
+
+/**
+ * Proven lessons for exactly what just failed, for a repair agent's prompt.
+ * Only lessons about one of the failing checks qualify: a build lesson that
+ * matches words in a test log would be noise.
+ */
+export function lessonsForFailure({
+  gate,
+  limit = FAILURE_LESSON_LIMIT,
+  review,
+}: {
+  gate: Pick<GateResult, "failedSteps" | "logs"> | null;
+  limit?: number;
+  /** Blocking review findings, when review is part of what failed. */
+  review?: { findings?: { description?: string }[] } | null;
+}): Lesson[] {
+  const steps = new Set<string>(gate?.failedSteps ?? []);
+  const findings = (review?.findings ?? []).map((f) => f.description ?? "").filter(Boolean);
+  if (findings.length) steps.add("review");
+  if (steps.size === 0) return [];
+  const text = [gate ? failureQuery(gate) : "", ...findings.slice(0, 4)].join(" ");
+  const match = ftsQuery(text, { exact: true, maxWords: 24 });
+  if (!match) return [];
+  return LibrarianStore.searchLessons(match, RANKING_POOL)
+    .filter((lesson) => steps.has(lesson.step))
+    .slice(0, limit);
+}
+
+/** Lessons for a failing command's output mid-session, when the agent hasn't asked. */
+export function lessonsForOutput(output: string, limit: number): Lesson[] {
+  const match = ftsQuery(errorLines(output).join(" "), { exact: true, maxWords: 24 });
+  return match ? LibrarianStore.searchLessons(match, limit) : [];
 }
 
 export function formatLessons(lessons: Lesson[]): string {
@@ -138,6 +246,10 @@ export function formatDocHits(chunks: DocChunk[]): string {
 export function searchCatalog(query: string): CatalogItem[] {
   const match = ftsQuery(query);
   return match ? LibrarianStore.searchCatalog(match, SEARCH_LIMIT) : [];
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function words(text: string): string[] {

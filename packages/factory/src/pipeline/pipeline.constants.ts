@@ -9,6 +9,16 @@ const SONNET = "claude-sonnet-5-5";
 // A straight pass is allocated ~$10.2, leaving ~$3.8 under the $15 cap (after
 // the $1 reserve) for repair and fix rounds.
 export const STAGE_SETTINGS: Record<AgentStageKey, StageSettings> = {
+  acceptance: {
+    budgetUsd: 0.6,
+    effort: "medium",
+    label: "Acceptance tests",
+    maxTurns: 10,
+    minUsd: 0.2,
+    model: SONNET,
+    skills: [],
+    timeoutMs: 10 * MINUTE,
+  },
   deployment: {
     budgetUsd: 0.75,
     effort: "medium",
@@ -51,6 +61,16 @@ export const STAGE_SETTINGS: Record<AgentStageKey, StageSettings> = {
     label: "Requirements",
     maxTurns: 10,
     minUsd: 0.1,
+    model: SONNET,
+    skills: [],
+    timeoutMs: 5 * MINUTE,
+  },
+  prdReview: {
+    budgetUsd: 0.15,
+    effort: "low",
+    label: "PRD check",
+    maxTurns: 5,
+    minUsd: 0.05,
     model: SONNET,
     skills: [],
     timeoutMs: 5 * MINUTE,
@@ -130,6 +150,9 @@ export const MAX_FIX_ATTEMPTS = 2;
 
 /** Port every generated app must listen on inside its container (overridable via $PORT). */
 export const APP_PORT = 8080;
+
+/** One resumed session to fix acceptance files that don't parse. */
+export const ACCEPTANCE_REPAIR_BUDGET_USD = 0.2;
 
 export const VERIFY_LABEL = "Verify";
 

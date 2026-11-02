@@ -23,26 +23,30 @@ export const STAGE_STATUS_ICONS: Record<StageStatus, string> = {
 export const PLANNED_STAGES: { key: string; label: string }[] = [
   { key: "research", label: "Research" },
   { key: "requirements", label: "Requirements" },
+  { key: "prdReview", label: "PRD check" },
   { key: "testCases", label: "Test cases" },
   { key: "architecture", label: "Architecture" },
   { key: "uiDesign", label: "UI/UX design" },
   { key: "development", label: "Development" },
+  { key: "acceptance", label: "Acceptance tests" },
   { key: "verify", label: "Verify" },
   { key: "review", label: "Review" },
 ];
 
 /** What each agent is for, in the customer's terms. */
 export const STAGE_DESCRIPTIONS: Record<string, string> = {
+  acceptance: "An independent tester writes black-box tests from the spec, without seeing the code",
   architecture: "Picks the technology, data model and API",
   deployment: "Repairs the app's container so it starts",
   development: "Writes the code and its tests, then checks it runs",
+  prdReview: "Checks the spec covers everything you asked for, and is testable and buildable",
   requirements: "Writes the product spec: features, screens, rules",
   research: "Looks at similar products and common patterns",
   review: "Reads the code for bugs, security and design issues",
   testCases: "Turns every acceptance criterion into a test case",
   testing: "Works out whether failing tests or the app are wrong",
   uiDesign: "Designs every screen, its states and components",
-  verify: "Runs the tests, starts the app and opens every screen (automated, no AI)",
+  verify: "Runs the tests, starts the app, opens every screen and runs the acceptance tests (automated, no AI)",
 };
 
 export const REDIRECT_DELAY_MS = 4_000;

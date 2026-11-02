@@ -1,9 +1,11 @@
 {
   "name": "software-factory",
   "private": true,
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "test": "bun test packages/factory",
+    "test": "cd packages/factory && bun test src",
     "typecheck": "bun run --filter '*' typecheck"
   }
 }

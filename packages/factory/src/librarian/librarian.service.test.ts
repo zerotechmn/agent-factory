@@ -3,7 +3,12 @@ import { describe, expect, test } from "bun:test";
 import {
   cleanLesson,
   clip,
+  errorLines,
+  failureQuery,
   ftsQuery,
+  lessonsForFailure,
+  rankedLessons,
+  stackTags,
   lessonSignature,
   quotesPrompt,
   recordLessons,
@@ -25,7 +30,7 @@ const lesson = (overrides: Partial<PendingLesson> = {}): PendingLesson => ({
 
 describe("ftsQuery", () => {
   test("quotes words so punctuation is never FTS syntax", () => {
-    expect(ftsQuery('antd Table: "pagination"?')).toBe('"antd" OR "table" OR "pagination"');
+    expect(ftsQuery('antd Table: "pagination"?')).toBe('"antd"* OR "table"* OR "pagination"*');
     expect(ftsQuery("a ? !")).toBeNull();
   });
 });
@@ -108,5 +113,52 @@ describe("recordLessons", () => {
     const prompt = "Build a booking app for the Ulaanbaatar dental clinic";
     const lessons = [lesson({ fix: " " }), lesson({ problem: "booking app for the ulaanbaatar dental clinic crashed" })];
     expect(recordLessons({ designSystem: "custom", lessons, prompt, runId: "run0000003" })).toBe(0);
+  });
+});
+
+describe("stackTags", () => {
+  test("finds the stack's technologies in lesson-tag vocabulary", () => {
+    const architecture = {
+      stack: {
+        backend: "Express 4 on Node.js 22 with better-sqlite3",
+        frontend: "React 18 + antd@6 + react-router-dom 6, built by Vite",
+        testFramework: "vitest + supertest",
+      },
+    };
+    expect(stackTags(architecture)).toEqual(["better-sqlite3", "react-router", "supertest", "express", "vitest", "react", "antd", "vite", "node"]);
+    expect(stackTags(null)).toEqual([]);
+  });
+});
+
+describe("errorLines and failureQuery", () => {
+  test("keeps what went wrong and drops what is unique to this app", () => {
+    const log = ["> app@1.0.0 test", "not ok 3 - TC-3: rejects 'bad' input", "    at /app/server/bookings.js:41:7", "Error: expected 400 got 500"].join("\n");
+    expect(errorLines(log)).toEqual(["not ok - TC- : rejects input", "Error: expected got"]);
+  });
+
+  test("names the failed steps first, then their log lines", () => {
+    const gate = { failedSteps: ["build" as const], logs: { build: "#12 ERROR: failed to solve: npm ci exited with code 1" } };
+    expect(failureQuery(gate)).toBe("build # ERROR: failed to solve: npm ci exited with code");
+  });
+});
+
+describe("rankedLessons and lessonsForFailure", () => {
+  const prompt = "An equipment rental desk for a sports club";
+  test("lessons tagged with the run's stack come first", () => {
+    recordLessons({ designSystem: "custom", lessons: [lesson({ problem: "Generic flaky timer test", step: "tests", tags: ["timers"] })], prompt, runId: "rank000001" });
+    recordLessons({ designSystem: "custom", lessons: [lesson({ problem: "Generic flaky timer test", step: "tests", tags: ["timers"] })], prompt, runId: "rank000002" });
+    recordLessons({ designSystem: "custom", lessons: [lesson({ problem: "Vite build output not served by Express", step: "health", tags: ["vite", "express"] })], prompt, runId: "rank000001" });
+    const ranked = rankedLessons({ designSystem: "custom", tags: ["express", "vite"] });
+    expect(ranked[0]?.problem).toBe("Vite build output not served by Express");
+    expect(rankedLessons({ designSystem: "custom", steps: ["tests"], tags: [] }).map((l) => l.step)).toEqual(["tests"]);
+  });
+
+  test("only lessons about a failing check qualify", () => {
+    recordLessons({ designSystem: "custom", lessons: [lesson({ problem: "Container exits because the server binds to localhost", step: "health", tags: ["docker"] })], prompt, runId: "fail000001" });
+    const healthGate = { failedSteps: ["health" as const], logs: { health: "server listening on localhost, connection refused" } };
+    expect(lessonsForFailure({ gate: healthGate }).map((l) => l.step)).toContain("health");
+    const testGate = { failedSteps: ["tests" as const], logs: { tests: "server listening on localhost, connection refused" } };
+    expect(lessonsForFailure({ gate: testGate }).every((l) => l.step === "tests")).toBe(true);
+    expect(lessonsForFailure({ gate: null })).toEqual([]);
   });
 });

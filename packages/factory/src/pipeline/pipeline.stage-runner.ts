@@ -1,4 +1,10 @@
-import { query, type McpSdkServerConfigWithInstance, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import {
+  query,
+  type HookCallbackMatcher,
+  type HookEvent,
+  type McpSdkServerConfigWithInstance,
+  type SDKMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -21,6 +27,8 @@ export type RunStageInput<Schema extends z.ZodObject> = {
   allowanceUsd: number;
   allowedTools: string[];
   cwd: string;
+  /** SDK hooks, e.g. the librarian attaching lessons to a failing command's output. */
+  hooks?: Partial<Record<HookEvent, HookCallbackMatcher[]>>;
   mcpServers?: Record<string, McpSdkServerConfigWithInstance>;
   model: string;
   /** Sees every SDK message as it arrives (live task board). Must not throw. */
@@ -102,6 +110,7 @@ export async function runStage<Schema extends z.ZodObject>(
           allowedTools: input.skills.length > 0 ? [...input.allowedTools, "Skill"] : input.allowedTools,
           cwd: input.cwd,
           effort: input.settings.effort,
+          ...(input.hooks ? { hooks: input.hooks } : {}),
           ...(resume ? { forkSession: true, resume } : {}),
           maxBudgetUsd: input.allowanceUsd,
           maxTurns: input.settings.maxTurns,

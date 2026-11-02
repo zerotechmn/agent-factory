@@ -1,120 +1,172 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Badge, Button, Drawer, Dropdown, Flex, Grid, Layout, Menu, Tooltip, Typography } from 'antd';
-import {
-  BellOutlined, CalendarOutlined, CarOutlined, DashboardOutlined, LogoutOutlined,
-  MenuFoldOutlined, MenuOutlined, MenuUnfoldOutlined, UserOutlined,
-} from '@ant-design/icons';
-// @ts-ignore shared JS module
-import { routeAccess } from '../../../shared/access.js';
-import { useSession } from '../session';
-import { api, Notification } from '../api';
-import { userLabel } from '../format';
-import { NoPermission } from '../components/States';
+import { BellOutlined, LogoutOutlined, MenuFoldOutlined, MenuOutlined, MenuUnfoldOutlined, UserOutlined } from "@ant-design/icons";
+import { Badge, Button, Drawer, Dropdown, Flex, Grid, Layout, Menu, Tooltip, Typography, type MenuProps } from "antd";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
-const { Header, Sider, Content } = Layout;
+import { APP_NAME, COPY } from "../app.config";
+import { NoPermission } from "../components/States";
 
-function menuItems(role: string) {
-  const items: any[] = [
-    { key: 'cars', icon: <CarOutlined aria-hidden="true" />, label: 'Cars', children: [{ key: '/cars', label: <Link to="/cars">Browse cars</Link> }] },
-  ];
-  if (role === 'Renter') {
-    items.push({ key: 'bookings', icon: <CalendarOutlined aria-hidden="true" />, label: 'Bookings', children: [{ key: '/bookings', label: <Link to="/bookings">My bookings</Link> }] });
-  }
-  if (role === 'Owner') {
-    items.push({
-      key: 'owner', icon: <DashboardOutlined aria-hidden="true" />, label: 'Owner dashboard', children: [
-        { key: '/listings', label: <Link to="/listings">My listings</Link> },
-        { key: '/booking-requests', label: <Link to="/booking-requests">Booking requests</Link> },
-        { key: '/earnings', label: <Link to="/earnings">Earnings</Link> },
-      ],
-    });
-  }
-  return items;
-}
+const { Content, Header, Sider } = Layout;
 
-const selectedKey = (path: string) => ['/booking-requests', '/earnings', '/listings', '/bookings', '/cars'].find((k) => path === k || path.startsWith(`${k}/`)) || '';
+/** One menu entry. Level 1 may have an icon and children; ZT §2 allows two levels, icons on level 1 only. */
+export type MenuEntry = {
+  children?: MenuEntry[];
+  icon?: ReactNode;
+  key: string;
+  label: string;
+  path?: string;
+  /** Roles that see this entry; omit for everyone. ZT §5: hide what a role can never use. */
+  roles?: string[];
+};
 
-export default function AppLayout() {
-  const { user, signOut } = useSession();
+/**
+ * ZT §2 app shell: light Sider (220, collapsible to 64, breakpoint lg) with
+ * the menu, a 64 px Header (collapse toggle left; notifications and the
+ * user menu right) and Content (padding 24). Below md the Sider becomes a
+ * Drawer opened from the Header. Pages render through <Outlet />.
+ */
+export function AppLayout({
+  canView = () => true,
+  menu,
+  notifications,
+  onSignOut,
+  user,
+}: {
+  /** False for a route this user may not open; the shell then shows the 403 state (ZT §9). */
+  canView?: (pathname: string) => boolean;
+  menu: MenuEntry[];
+  notifications?: { count: number; onOpen: () => void };
+  onSignOut: () => void;
+  user: { name: string; role?: string };
+}) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
   const isMobile = screens.md === false;
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [unread, setUnread] = useState(0);
 
   useEffect(() => setDrawerOpen(false), [pathname]);
-  useEffect(() => {
-    api<Notification[]>('/api/notifications').then((n) => setUnread(n.length)).catch(() => setUnread(0));
-  }, [pathname]);
 
-  const items = useMemo(() => menuItems(user!.role), [user]);
-  const key = selectedKey(pathname);
-  const openKeys = ['cars', 'bookings', 'owner'];
-  const menu = (
-    <Menu mode="inline" items={items} selectedKeys={[key]} defaultOpenKeys={openKeys} aria-label="Main navigation" />
+  const visible = useMemo(() => visibleEntries(menu, user.role), [menu, user.role]);
+  const selected = selectedKey(visible, pathname);
+  const nav = (
+    <Menu
+      aria-label={COPY.mainNavigation}
+      defaultOpenKeys={visible.filter((e) => e.children?.length).map((e) => e.key)}
+      items={toMenuItems(visible)}
+      mode="inline"
+      selectedKeys={selected ? [selected] : []}
+    />
   );
-  const notificationsPath = user!.role === 'Owner' ? '/booking-requests' : '/bookings';
-  const denied = routeAccess(user, pathname);
 
   return (
-    <Layout className="w2g-shell">
-      <a href="#main" className="w2g-skip">Skip to main content</a>
+    <Layout className="zt-shell">
+      <a className="zt-skip" href="#main">
+        {COPY.skipToContent}
+      </a>
       {!isMobile && (
-        <Sider theme="light" width={220} collapsible collapsed={collapsed} collapsedWidth={64} breakpoint="lg"
-          onBreakpoint={(broken) => setCollapsed(broken)} trigger={null} className="w2g-sider">
-          <Link to="/" className="w2g-logo" aria-label="Wheels2Go home">
-            <Typography.Text strong className="w2g-logo-text"><CarOutlined aria-hidden="true" />{!collapsed && ' Wheels2Go'}</Typography.Text>
+        <Sider
+          breakpoint="lg"
+          className="zt-sider"
+          collapsed={collapsed}
+          collapsedWidth={64}
+          collapsible
+          onBreakpoint={(broken) => setCollapsed(broken)}
+          theme="light"
+          trigger={null}
+          width={220}
+        >
+          <Link aria-label={COPY.home} className="zt-logo" to="/">
+            <Typography.Text className="zt-logo-text" strong>
+              {collapsed ? APP_NAME.slice(0, 1) : APP_NAME}
+            </Typography.Text>
           </Link>
-          {menu}
+          {nav}
         </Sider>
       )}
-      <Layout className="w2g-minw0">
-        <Header className="w2g-header">
-          <Flex align="center" gap="small" className="w2g-minw0">
+      <Layout className="zt-minw0">
+        <Header className="zt-header">
+          <Flex align="center" className="zt-minw0" gap="small">
             {isMobile ? (
               <>
-                <Tooltip title="Open menu">
-                  <Button type="text" icon={<MenuOutlined />} aria-label="Open menu" onClick={() => setDrawerOpen(true)} className="w2g-touch" />
+                <Tooltip title={COPY.openMenu}>
+                  <Button aria-label={COPY.openMenu} className="zt-touch" icon={<MenuOutlined />} onClick={() => setDrawerOpen(true)} type="text" />
                 </Tooltip>
-                <Link to="/" className="w2g-logo-inline" aria-label="Wheels2Go home"><Typography.Text strong>Wheels2Go</Typography.Text></Link>
+                <Link aria-label={COPY.home} className="zt-logo-inline" to="/">
+                  <Typography.Text strong>{APP_NAME}</Typography.Text>
+                </Link>
               </>
             ) : (
-              <Tooltip title={collapsed ? 'Expand menu' : 'Collapse menu'}>
-                <Button type="text" icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-                  aria-label={collapsed ? 'Expand menu' : 'Collapse menu'} onClick={() => setCollapsed(!collapsed)} />
+              <Tooltip title={collapsed ? COPY.expandMenu : COPY.collapseMenu}>
+                <Button
+                  aria-label={collapsed ? COPY.expandMenu : COPY.collapseMenu}
+                  icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                  onClick={() => setCollapsed(!collapsed)}
+                  type="text"
+                />
               </Tooltip>
             )}
           </Flex>
-          <Flex align="center" gap="small" className="w2g-minw0">
-            <Tooltip title="Notifications">
-              <Badge count={unread} size="small" overflowCount={99}>
-                <Button type="text" icon={<BellOutlined />} aria-label={`Notifications (${unread})`}
-                  onClick={() => navigate(notificationsPath)} className="w2g-touch" />
-              </Badge>
-            </Tooltip>
-            <Dropdown trigger={['click']} menu={{
-              items: [{ key: 'signout', icon: <LogoutOutlined />, label: 'Sign out' }],
-              onClick: () => { signOut(); navigate('/'); },
-            }}>
-              <Button type="text" className="w2g-user-btn" data-testid="current-user" aria-label={`Account menu for ${userLabel(user!)}`}>
+          <Flex align="center" className="zt-minw0" gap="small">
+            {notifications && (
+              <Tooltip title={COPY.notifications(notifications.count)}>
+                <Badge count={notifications.count} overflowCount={99} size="small">
+                  <Button
+                    aria-label={COPY.notifications(notifications.count)}
+                    className="zt-touch"
+                    icon={<BellOutlined />}
+                    onClick={notifications.onOpen}
+                    type="text"
+                  />
+                </Badge>
+              </Tooltip>
+            )}
+            <Dropdown
+              menu={{ items: [{ icon: <LogoutOutlined />, key: "signout", label: COPY.signOut }], onClick: onSignOut }}
+              trigger={["click"]}
+            >
+              <Button aria-label={COPY.account(user.name)} className="zt-user-btn" type="text">
                 <UserOutlined aria-hidden="true" />
-                <Typography.Text ellipsis className="w2g-user-name">{userLabel(user!)}</Typography.Text>
+                <Typography.Text className="zt-user-name" ellipsis>
+                  {user.name}
+                </Typography.Text>
               </Button>
             </Dropdown>
           </Flex>
         </Header>
-        <Content id="main" className="w2g-content" tabIndex={-1}>
-          {denied ? <NoPermission /> : <Outlet />}
+        <Content className="zt-content" id="main" tabIndex={-1}>
+          {canView(pathname) ? <Outlet /> : <NoPermission onBack={() => navigate("/")} />}
         </Content>
       </Layout>
       {isMobile && (
-        <Drawer placement="left" open={drawerOpen} onClose={() => setDrawerOpen(false)} title="Wheels2Go" size="default" className="w2g-drawer">
-          {menu}
+        <Drawer className="zt-drawer" onClose={() => setDrawerOpen(false)} open={drawerOpen} placement="left" size="default" title={APP_NAME}>
+          {nav}
         </Drawer>
       )}
     </Layout>
   );
+}
+
+function visibleEntries(entries: MenuEntry[], role: string | undefined): MenuEntry[] {
+  return entries
+    .filter((e) => !e.roles || (role !== undefined && e.roles.includes(role)))
+    .map((e) => (e.children ? { ...e, children: visibleEntries(e.children, role) } : e))
+    .filter((e) => !e.children || e.children.length > 0);
+}
+
+function toMenuItems(entries: MenuEntry[], level = 1): NonNullable<MenuProps["items"]> {
+  return entries.map((e) => ({
+    children: e.children ? toMenuItems(e.children, level + 1) : undefined,
+    icon: level === 1 ? e.icon : undefined,
+    key: e.path ?? e.key,
+    label: e.path ? <Link to={e.path}>{e.label}</Link> : e.label,
+  }));
+}
+
+/** The entry whose path is the longest prefix of the current path, so /orders/12 keeps "Orders" selected. */
+function selectedKey(entries: MenuEntry[], pathname: string): string | null {
+  const paths = entries.flatMap((e) => [e.path, ...(e.children ?? []).map((c) => c.path)]).filter((p): p is string => Boolean(p));
+  const matches = paths.filter((p) => pathname === p || pathname.startsWith(p === "/" ? "/" : `${p}/`));
+  return matches.sort((a, b) => b.length - a.length)[0] ?? null;
 }

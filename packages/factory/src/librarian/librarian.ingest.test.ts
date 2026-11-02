@@ -72,8 +72,8 @@ describe("indexLibrary", () => {
     writeFileSync(join(root, "catalog/zt-shell/README.md"), "# ZT shell\n\nApp shell with side menu.\n\nTags: antd, layout");
     writeFileSync(join(root, "catalog/zt-shell/files/Shell.tsx"), "export function Shell() {}");
 
-    expect(await indexLibrary(root)).toEqual({ catalog: 1, docs: 1 });
-    expect(await indexLibrary(root)).toEqual({ catalog: null, docs: null });
+    expect(await indexLibrary(root, [])).toEqual({ catalog: 1, docs: 1 });
+    expect(await indexLibrary(root, [])).toEqual({ catalog: null, docs: null });
 
     expect(searchDocs("table pageSize", "antd")[0]?.id).toBe("antd@6/table#pagination");
     expect(searchDocs("table pageSize", "vite")).toEqual([]);
@@ -86,5 +86,13 @@ describe("indexLibrary", () => {
     expect(readFileSync(join(workspace, "src/shell/Shell.tsx"), "utf8")).toBe("export function Shell() {}");
     expect(await copyIntoWorkspace(workspace, "src/shell", item.files)).toEqual({ skipped: ["src/shell/Shell.tsx"], written: [] });
     await expect(copyIntoWorkspace(workspace, "../outside", item.files)).rejects.toThrow("inside the workspace");
+  });
+});
+
+describe("ZT design system as docs", () => {
+  test("is chunked by section under its own library", () => {
+    const md = "---\nname: zt\n---\n\n## Factory overrides (read first)\n\nNo Figma here at all.\n\n# ZT Design System v2.0\n\nIntro text for the system.\n\n## 9. States and feedback\n\nEvery screen has loading, empty and error states.";
+    const ids = chunkMarkdown("zt-design-system/skill.md", md).map((c) => c.id);
+    expect(ids).toContain("zt-design-system/skill#9-states-and-feedback");
   });
 });

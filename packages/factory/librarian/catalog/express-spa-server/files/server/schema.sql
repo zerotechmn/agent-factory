@@ -1,0 +1,2 @@
+-- One CREATE TABLE IF NOT EXISTS per PRD entity (the architecture's dataModel).
+-- Runs on every start, so every statement must be safe to repeat.

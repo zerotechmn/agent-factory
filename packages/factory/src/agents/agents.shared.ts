@@ -2,6 +2,7 @@ import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-
 import type { z } from "zod";
 
 import { LIBRARIAN_SERVER, type LibrarianToolset } from "../librarian/librarian.constants";
+import { formatLessons } from "../librarian/librarian.service";
 import type { Lesson } from "../librarian/librarian.types";
 import type { GateResult } from "../pipeline/pipeline.gate";
 import type { AgentStageKey, DesignSystem } from "../pipeline/pipeline.types";
@@ -19,8 +20,10 @@ export type StageContext = {
   gate: GateResult | null;
   /** Latest successful handoff per stage. Never contains REPORT.md prose. */
   handoffs: Partial<Record<AgentStageKey, unknown>>;
-  /** The most frequent proven lessons for this design system; only the developer's first build gets them. */
+  /** Proven lessons the factory picked for this step: by stack for a build, by failure for a repair. */
   lessons: Lesson[];
+  /** What the librarian holds, listed in the prompts of stages that choose libraries or write modules. */
+  libraryIndex: { catalog: { name: string; summary: string }[]; docs: string[] } | null;
   /** Librarian tools this stage can call; empty when the librarian is off or the stage has none. */
   librarianToolsets: LibrarianToolset[];
   /** Problems the factory found in this agent's previous output, for it to correct. */
@@ -83,27 +86,51 @@ Application contract every generated app must satisfy:
 - The UI is served by the same server at "/".`;
 }
 
+/** Pushed lessons under a heading that says why this agent is seeing them; empty when there are none. */
+export function lessonsBlock(heading: string, lessons: Lesson[]): string {
+  if (lessons.length === 0) return "";
+  return `\n## ${heading}\n\n${formatLessons(lessons)}\n`;
+}
+
+/**
+ * What the librarian holds. The docs are pinned to one major per library, so
+ * an app built on those majors gets docs that match its code exactly.
+ */
+export function libraryBlock(index: StageContext["libraryIndex"], { catalogHint }: { catalogHint: string }): string {
+  if (!index || (index.docs.length === 0 && index.catalog.length === 0)) return "";
+  const docs = index.docs.length ? `Version-pinned docs (library@major): ${index.docs.join(", ")}.` : "";
+  const catalog = index.catalog.length
+    ? `\nProven modules in the catalog (${catalogHint}):\n${index.catalog.map((c) => `- ${c.name}: ${c.summary}`).join("\n")}`
+    : "";
+  return `\n## Factory library\n\n${docs}${catalog}\n`;
+}
+
 export function jsonBlock(title: string, value: unknown): string {
   // Compact on purpose: indentation was ~25% of every spec's characters, and
   // these blocks are re-read on every turn of every agent's session.
   return `## ${title}\n\n\`\`\`json\n${JSON.stringify(value ?? null)}\n\`\`\``;
 }
 
-const LIBRARIAN_NOTES: Record<LibrarianToolset, string> = {
-  catalog: "catalog_search / catalog_get: proven modules from earlier apps that passed verify; check before writing a common module from scratch",
-  docs: "docs_search / docs_read: version-pinned framework docs; use instead of guessing an API, prop or config option",
-  lessons: "lessons_search: problems earlier runs hit, their root causes and the fixes that passed verify; search before debugging",
-  spec: "spec_get / spec_trace: this run's spec items by id, and what they link to with task-board status",
+/**
+ * Concrete "when X, call Y" rules. "Use it when unsure" got almost no calls:
+ * models rarely feel unsure, and guessing an API is exactly what costs a fix
+ * round later.
+ */
+const LIBRARIAN_RULES: Record<LibrarianToolset, string> = {
+  catalog:
+    "Before writing an app shell, a list/form/detail page, a server bootstrap or a Dockerfile: catalog_search for a proven module, and copy a match with catalog_get instead of writing it from scratch.",
+  docs:
+    "Before using a component, hook, prop or config option of a documented library (antd, react-router, vite, vitest, better-sqlite3, node:test and others) that you haven't used yet in this step: docs_search it. Look up all the components of one screen in a single turn.",
+  lessons: "Before debugging any failure (test, build, start, browser check): lessons_search with the error message. Earlier runs may have fixed the same thing.",
+  spec: "When code, a test or a finding names a spec id you haven't read in full (F-, AC-, S-, BRL-, TC-): spec_get it. Use spec_trace to see what a change affects or which tests cover a criterion.",
 };
 
-/**
- * Every librarian call is one more model turn re-reading the whole context,
- * so the note steers agents to call it when it saves guessing, not by habit.
- */
+/** Calls cost a turn each, so the rules come with a reminder to batch and a known limit. */
 function librarianNote(toolsets: LibrarianToolset[]): string {
   if (toolsets.length === 0) return "";
-  return `- You have the factory librarian (mcp__${LIBRARIAN_SERVER}__* tools). Use it when you are unsure, not by routine: each call costs a turn. Ask several things in one turn when you can (parallel tool calls). It has a call limit per step.
-${toolsets.map((set) => `  - ${LIBRARIAN_NOTES[set]}`).join("\n")}
+  return `- The factory librarian (mcp__${LIBRARIAN_SERVER}__* tools) holds docs, lessons and specs you would otherwise guess at. Follow these rules; when several lookups are due, make them as parallel tool calls in one turn (each turn costs money, and a step has a call limit):
+${toolsets.map((set) => `  - ${LIBRARIAN_RULES[set]}`).join("\n")}
+- The factory may add "Librarian:" notes to a tool result (matching lessons after a failure, doc ids after an import). Read them; they are from earlier runs of this factory.
 `;
 }
 

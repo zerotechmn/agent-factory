@@ -1,8 +1,7 @@
 import { z } from "zod";
 
 import { lessonsField } from "../../librarian/librarian.schema";
-import { formatLessons } from "../../librarian/librarian.service";
-import { CODE_TOOLS, jsonBlock, type AgentDefinition, type StageContext } from "../agents.shared";
+import { CODE_TOOLS, jsonBlock, lessonsBlock, libraryBlock, type AgentDefinition, type StageContext } from "../agents.shared";
 import { DEVELOPMENT_TOOL_NAMES, developmentMcpServer } from "./development.tools";
 
 const schema = z.object({
@@ -42,7 +41,7 @@ function buildPrompt(ctx: StageContext): string {
 Before writing any code, load these skills with the Skill tool and follow them: factory:test-driven-development, factory:verification-before-completion, ${ctx.designSystem === "zt" ? "factory:zt-design-system" : "factory:frontend-design"} and factory:web-interface-guidelines. The reviewer checks your work against them${ctx.designSystem === "zt" ? "; where the web interface guidelines and the ZT Design System disagree, ZT wins" : ""}.
 
 Work in this order:
-1. Scaffold the project and the Dockerfile exactly per the application contract.
+1. Scaffold the project and the Dockerfile exactly per the application contract. Install the library majors the architecture chose (the librarian's docs match them).
 2. Implement features story by story, test first: follow the factory:test-driven-development skill, turning each test-plan case into a failing automated test before writing the code that makes it pass (api/unit cases required; e2e cases may be HTTP-level tests if a browser is impractical). Work in small cycles; your budget is limited, so don't rewrite working code just to restart a cycle.
 3. ${
     ctx.designSystem === "zt"
@@ -58,10 +57,15 @@ Work in this order:
 
 Name every automated test after its test case id, e.g. "TC-3: rejects an end date before the start".
 
+Implement the API exactly as the architecture's contract says: paths, field names, request and response shapes, status codes, errors and auth. Serve every screen at its contract route (the UI design's route on ZT runs, otherwise the architecture's routes). An independent tester is writing black-box acceptance tests against that contract right now; they run against your container in verify, and you won't see them before then.
+
 After you finish, the factory itself re-runs your install and test commands, builds the Dockerfile and checks /health, so those commands must work from a clean checkout.
 
 Do not commit node_modules, virtualenvs or build output; add a .gitignore and a .dockerignore.
-${pastLessons(ctx)}
+${lessonsBlock("Problems earlier factory runs hit most often with this stack, and the fixes that passed verify. Avoid them from the start", ctx.lessons)}${libraryBlock(
+    ctx.libraryIndex,
+    { catalogHint: "copy one with catalog_get instead of writing it from scratch" },
+  )}
 ${jsonBlock("PRD", ctx.handoffs.requirements)}
 
 ${jsonBlock("Test plan", ctx.handoffs.testCases)}
@@ -80,7 +84,7 @@ Follow the factory:systematic-debugging skill: find each root cause before chang
 Fix every blocker/major review finding and every app bug. Ignore minor findings unless they are one-line fixes.
 
 In lessons, record each distinct problem above that you fixed, as general engineering knowledge future apps can reuse.
-
+${lessonsBlock("Earlier factory runs fixed failures like these. Check whether they apply before debugging", ctx.lessons)}
 ${jsonBlock("Verify gate (automated checks run by the factory)", summarizeGate(fix?.gate ?? null))}
 
 ${jsonBlock("Test triage: app bugs found by the tester", fix?.triage ?? null)}
@@ -90,18 +94,6 @@ ${jsonBlock("Review findings", fix?.review ?? null)}${
       ? ""
       : `\n\n${jsonBlock("PRD", ctx.handoffs.requirements)}\n\n${jsonBlock("Architecture", ctx.handoffs.architecture)}`
   }`;
-}
-
-/**
- * The traps earlier runs hit most often, in the prompt itself: they are the
- * ones most likely to recur, and seeing them costs no tool call.
- */
-function pastLessons(ctx: StageContext): string {
-  if (ctx.lessons.length === 0) return "";
-  return `
-Problems earlier factory runs hit most often with this design system, and the fixes that passed verify. Avoid them from the start:
-${formatLessons(ctx.lessons)}
-`;
 }
 
 function summarizeGate(gate: StageContext["gate"]) {

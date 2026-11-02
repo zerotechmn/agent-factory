@@ -4,7 +4,11 @@ import * as RunsController from "./runs.controller";
 
 export const runsRoutes = new Elysia({ prefix: "/api/runs" })
   .post("/", ({ body, request, server }) =>
-    RunsController.createRun({ body, ip: clientIp(request, server?.requestIP(request)?.address) }),
+    RunsController.createRun({
+      benchmarkToken: request.headers.get("x-benchmark-token"),
+      body,
+      ip: clientIp(request, server?.requestIP(request)?.address),
+    }),
   )
   .get("/:id", ({ params }) => RunsController.getRun(params.id))
   .get("/:id/board", ({ params }) => RunsController.getBoard(params.id))

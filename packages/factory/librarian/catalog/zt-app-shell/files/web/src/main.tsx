@@ -1,25 +1,21 @@
-import React from 'react';
-import { createRoot } from 'react-dom/client';
-import { BrowserRouter } from 'react-router-dom';
-import { App as AntApp, ConfigProvider } from 'antd';
-import enUS from 'antd/locale/en_US';
-import dayjs from 'dayjs';
-import 'dayjs/locale/en';
-import { theme } from './theme';
-import { SessionProvider } from './session';
-import App from './App';
-import './styles.css';
+import { App as AntApp, ConfigProvider } from "antd";
+import React from "react";
+import { createRoot } from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
 
-dayjs.locale('en');
+import { App } from "./App";
+import { antdLocale, theme } from "./theme";
+import "./styles.css";
 
-createRoot(document.getElementById('root')!).render(
+// ZT §13: ConfigProvider carries the theme and locale; the antd App wrapper
+// makes App.useApp() message/notification/modal pick them up (ZT §9).
+// Wrap <App /> in your session or data providers inside BrowserRouter.
+createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <ConfigProvider locale={enUS} theme={theme}>
+    <ConfigProvider locale={antdLocale} theme={theme}>
       <AntApp>
         <BrowserRouter>
-          <SessionProvider>
-            <App />
-          </SessionProvider>
+          <App />
         </BrowserRouter>
       </AntApp>
     </ConfigProvider>

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { lessonsField } from "../../librarian/librarian.schema";
-import { jsonBlock, READ_TOOLS, type AgentDefinition } from "../agents.shared";
+import { jsonBlock, lessonsBlock, READ_TOOLS, type AgentDefinition } from "../agents.shared";
 import { DEPLOYMENT_TOOL_NAMES, deploymentMcpServer } from "./deployment.tools";
 
 const schema = z.object({
@@ -27,6 +27,7 @@ export const deploymentAgent: AgentDefinition<typeof schema> = {
 
 Report deployed=true only if /health returned 200. The public URL will be ${ctx.appUrl}.
 
+${lessonsBlock("Earlier factory runs fixed container failures like this one. Check whether they apply first", ctx.lessons)}
 ${jsonBlock("Verify gate failure", { failedSteps: ctx.gate?.failedSteps, logs: ctx.gate?.logs, smokeFailures: ctx.gate?.smoke.filter((s) => !s.ok) })}
 
 ${jsonBlock("Architecture", ctx.handoffs.architecture)}`,
