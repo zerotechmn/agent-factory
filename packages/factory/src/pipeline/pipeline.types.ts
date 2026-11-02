@@ -40,6 +40,7 @@ export const RUN_STATUSES = [
   "deployed_partial",
   "failed",
   "failed_budget",
+  "cancelled",
 ] as const;
 
 export type RunStatus = (typeof RUN_STATUSES)[number];

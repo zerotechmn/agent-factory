@@ -4,8 +4,17 @@ import type { z } from "zod";
 import { LIBRARIAN_SERVER, type LibrarianToolset } from "../librarian/librarian.constants";
 import { formatLessons } from "../librarian/librarian.service";
 import type { Lesson } from "../librarian/librarian.types";
+import type { DevSlice } from "./development/development.slices";
 import type { GateResult } from "../pipeline/pipeline.gate";
 import type { AgentStageKey, DesignSystem } from "../pipeline/pipeline.types";
+
+/** An earlier part's summary, handed to the parts after it. */
+export type DevPartSummary = { featureIds: string[]; id: string; knownGaps: string[]; notes: string; screens: { path: string | null; screenId: string }[] };
+
+export type DevPartContext =
+  | { kind: "scaffold" }
+  | { kind: "feature"; previous: DevPartSummary[]; slice: DevSlice }
+  | { kind: "finish"; previous: DevPartSummary[] };
 
 export type StageContext = {
   allowanceUsd: number;
@@ -14,6 +23,11 @@ export type StageContext = {
   /** Whether the browser checks test phone width as well as desktop. */
   checkMobile: boolean;
   designSystem: DesignSystem;
+  /**
+   * Set when the developer builds the app in parts: which part this session
+   * is, its slice of the spec for a feature part, and what earlier parts left.
+   */
+  devPart: DevPartContext | null;
   /** Present when development is re-run to fix verify, triage or review findings. */
   fix: { attempt: number; gate: GateResult | null; review: unknown; triage: unknown } | null;
   /** The verify result a repair agent (testing triage, deployment repair) is asked to act on. */

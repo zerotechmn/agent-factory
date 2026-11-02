@@ -5,19 +5,39 @@ export type Budget = {
   /** Allowances handed to stages that are still running. */
   committedUsd: number;
   deployReserveUsd: number;
+  /** Held back from the build so the first verify failure can always be fixed. */
+  fixReserveUsd: number;
   spentUsd: number;
 };
+
+/**
+ * Which reserves a stage may draw on. "build": neither (spec, design, the
+ * first build, the first review). "repair": the fix reserve (fix rounds, test
+ * triage, re-reviews). "deploy": both (deployment repair, the last resort).
+ */
+export type ReserveAccess = "build" | "deploy" | "repair";
 
 export type AllowanceDecision =
   | { allowanceUsd: number; kind: "go" }
   | { kind: "stop"; reason: string };
 
-export function createBudget({ capUsd, deployReserveUsd }: { capUsd: number; deployReserveUsd: number }): Budget {
+export function createBudget({
+  capUsd,
+  deployReserveUsd,
+  fixReserveUsd = 0,
+}: {
+  capUsd: number;
+  deployReserveUsd: number;
+  fixReserveUsd?: number;
+}): Budget {
+  const cap = Math.max(capUsd, 0);
+  // Reserves larger than the cap would block every stage; clamp them, deploy first.
+  const deployReserve = Math.min(Math.max(deployReserveUsd, 0), cap);
   return {
-    capUsd: Math.max(capUsd, 0),
+    capUsd: cap,
     committedUsd: 0,
-    // A reserve larger than the cap would block every stage; clamp it.
-    deployReserveUsd: Math.min(Math.max(deployReserveUsd, 0), Math.max(capUsd, 0)),
+    deployReserveUsd: deployReserve,
+    fixReserveUsd: Math.min(Math.max(fixReserveUsd, 0), cap - deployReserve),
     spentUsd: 0,
   };
 }
@@ -33,23 +53,26 @@ export function availableUsd(budget: Budget): number {
 }
 
 /**
- * Decides how much a stage may spend. Ordinary stages never eat into the
- * deploy reserve, so an early stop can still repair and ship whatever was
- * built; only the deployment-repair stage may draw on it.
+ * Decides how much a stage may spend. Build stages never eat into either
+ * reserve, so a run that spends heavily on the first build still has money
+ * to fix what verify finds, and an early stop can still repair and ship
+ * whatever was built. Fix stages may use the fix reserve; only deployment
+ * repair may use the deploy reserve.
  */
 export function decideAllowance({
+  access,
   budget,
-  canUseReserve,
   minUsd,
   requestedUsd,
 }: {
+  access: ReserveAccess;
   budget: Budget;
-  canUseReserve: boolean;
   minUsd: number;
   requestedUsd: number;
 }): AllowanceDecision {
   const available = availableUsd(budget);
-  const spendable = canUseReserve ? available : Math.max(available - budget.deployReserveUsd, 0);
+  const held = access === "deploy" ? 0 : access === "repair" ? budget.deployReserveUsd : budget.deployReserveUsd + budget.fixReserveUsd;
+  const spendable = Math.max(available - held, 0);
   const allowanceUsd = roundUsd(Math.min(Math.max(requestedUsd, 0), spendable));
 
   if (allowanceUsd < minUsd) {

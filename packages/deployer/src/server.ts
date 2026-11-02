@@ -31,6 +31,7 @@ const instanceSchema = z.enum(["live", "acceptance"]).default("live");
 const runSchema = z.object({ instance: instanceSchema, port: z.number().int().min(1).max(65_535).default(8080), runId: runIdSchema });
 const checkSchema = z.object({ instance: instanceSchema, path: z.string().startsWith("/").max(500).default("/health"), runId: runIdSchema });
 const removeSchema = z.object({ instance: z.literal("acceptance"), runId: runIdSchema });
+const destroySchema = z.object({ runId: runIdSchema });
 const rollbackSchema = z.object({ port: z.number().int().min(1).max(65_535).default(8080), runId: runIdSchema });
 
 type Instance = z.infer<typeof instanceSchema>;
@@ -59,6 +60,7 @@ Bun.serve({
       if (pathname === "/check") return Response.json(await check(checkSchema.parse(body)));
       if (pathname === "/logs") return Response.json(await logs(buildSchema.parse(body)));
       if (pathname === "/remove") return Response.json(await remove(removeSchema.parse(body)));
+      if (pathname === "/destroy") return Response.json(await destroy(destroySchema.parse(body)));
       if (pathname === "/rollback") return Response.json(await rollback(rollbackSchema.parse(body)));
       return Response.json({ error: "Not found" }, { status: 404 });
     } catch (error) {
@@ -118,6 +120,16 @@ async function run({ instance, port, runId }: { instance: Instance; port: number
   const state = await docker(["inspect", "-f", "{{.State.Status}}", n.container], 10_000);
   const url = instance === "acceptance" ? `http://${n.container}:${port}` : `http://${host}`;
   return { container: n.container, ok: state.output.trim() === "running", state: state.output.trim(), url };
+}
+
+/** Removes everything the deployer made for one run: both containers, both image tags and the data volume. */
+async function destroy({ runId }: { runId: string }) {
+  const live = names(runId);
+  const acceptance = names(runId, "acceptance");
+  await docker(["rm", "-f", live.container, acceptance.container], 60_000);
+  await docker(["rmi", "-f", live.image, live.previous], 60_000);
+  const volume = await docker(["volume", "rm", "-f", live.volume], 30_000);
+  return { ok: volume.exitCode === 0 };
 }
 
 /** Puts the previous image back as :latest and restarts the live app from it. */

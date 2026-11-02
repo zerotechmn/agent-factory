@@ -64,6 +64,10 @@ db.exec(`
 
 // Columns added after the first release; ALTER is idempotent via the check.
 const runColumns = new Set(db.query<{ name: string }, []>("PRAGMA table_info(runs)").all().map((c) => c.name));
+if (!runColumns.has("resume_count")) {
+  // How many times a restart interrupted this run and it was put back in the queue.
+  db.exec("ALTER TABLE runs ADD COLUMN resume_count INTEGER NOT NULL DEFAULT 0");
+}
 if (!runColumns.has("design_system")) {
   db.exec(`ALTER TABLE runs ADD COLUMN design_system TEXT NOT NULL DEFAULT '${DEFAULT_DESIGN_SYSTEM}'`);
   // Runs from before design systems existed all used the custom-design path.
@@ -227,15 +231,45 @@ export function spendSinceUsd(sinceIso: string): number {
 }
 
 /** A restart kills in-flight agents; mark those runs failed instead of leaving them "running" forever. */
-export function failInterruptedRuns(): number {
-  const result = db
-    .query(
-      `UPDATE runs SET status = 'failed', stop_reason = 'Factory restarted while this run was in progress', updated_at = ?
-       WHERE status IN ('running', 'waiting_customer')`,
-    )
-    .run(now());
-  db.query(`UPDATE stages SET status = 'failed', error = 'Interrupted by restart' WHERE status = 'running'`).run();
-  return result.changes;
+/** The error a restart writes on the steps it cut off; a resumed run runs those steps again. */
+export const INTERRUPTED_ERROR = "Interrupted by restart";
+
+/**
+ * After a restart, runs that were in progress go back to the front of the
+ * queue (oldest first) and resume from their finished steps. A run the
+ * factory keeps dying on is failed after `maxResumes` tries instead of
+ * looping. Runs in `exclude` (feedback rounds) are left for their own handling.
+ */
+export function requeueInterruptedRuns({ exclude, maxResumes }: { exclude: string[]; maxResumes: number }): {
+  failed: string[];
+  requeued: string[];
+} {
+  const at = now();
+  const failed: string[] = [];
+  const requeued: string[] = [];
+  db.transaction(() => {
+    db.query(`UPDATE stages SET status = 'failed', error = ?, finished_at = ? WHERE status = 'running'`).run(INTERRUPTED_ERROR, at);
+    const rows = db
+      .query<{ id: string; resume_count: number }, []>("SELECT id, resume_count FROM runs WHERE status IN ('running', 'waiting_customer')")
+      .all()
+      .filter((r) => !exclude.includes(r.id));
+    for (const row of rows) {
+      if (row.resume_count >= maxResumes) {
+        db.query(`UPDATE runs SET status = 'failed', current_stage = NULL, stop_reason = ?, updated_at = ? WHERE id = ?`).run(
+          `The factory restarted ${row.resume_count + 1} times during this run; giving up instead of retrying again`,
+          at,
+          row.id,
+        );
+        failed.push(row.id);
+        continue;
+      }
+      db.query(
+        `UPDATE runs SET status = 'queued', current_stage = NULL, stop_reason = 'Resuming after a factory restart', resume_count = resume_count + 1, updated_at = ? WHERE id = ?`,
+      ).run(at, row.id);
+      requeued.push(row.id);
+    }
+  })();
+  return { failed, requeued };
 }
 
 export function queuePosition(id: string): number {
@@ -246,4 +280,10 @@ export function queuePosition(id: string): number {
       )
       .get(id)?.n ?? 0
   );
+}
+
+/** Part of deleting a run; the caller wraps every store's deleteRun in one transaction. */
+export function deleteRun(runId: string): void {
+  db.query("DELETE FROM stages WHERE run_id = ?").run(runId);
+  db.query("DELETE FROM runs WHERE id = ?").run(runId);
 }

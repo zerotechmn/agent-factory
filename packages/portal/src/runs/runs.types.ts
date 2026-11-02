@@ -1,6 +1,6 @@
 export type DesignSystem = "zt" | "custom";
 
-export type RunStatus = "queued" | "running" | "waiting_customer" | "deployed" | "deployed_partial" | "failed" | "failed_budget";
+export type RunStatus = "queued" | "running" | "waiting_customer" | "deployed" | "deployed_partial" | "failed" | "failed_budget" | "cancelled";
 
 export type Checkpoint = "research" | "prd";
 

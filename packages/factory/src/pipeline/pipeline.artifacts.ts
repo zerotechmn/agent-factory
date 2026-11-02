@@ -124,6 +124,19 @@ export async function gitOutput(paths: RunPaths, args: string[]): Promise<string
   return code === 0 ? out : "";
 }
 
+/**
+ * Drops what an interrupted step left half-written, back to the last commit
+ * (every finished step commits). Ignored files such as node_modules stay, so
+ * the rerun doesn't reinstall everything. A workspace without commits is left alone.
+ */
+export async function resetWorkspace(paths: RunPaths): Promise<void> {
+  if (!(await Bun.file(join(paths.workspace, ".git", "HEAD")).exists())) return;
+  const git = (...args: string[]) => Bun.spawn(["git", ...args], { cwd: paths.workspace, stderr: "ignore", stdout: "ignore" }).exited;
+  if (!(await headCommit(paths))) return;
+  await git("reset", "--hard", "-q", "HEAD");
+  await git("clean", "-fdq");
+}
+
 /** Current workspace commit, so a re-review can diff exactly what changed since the last review. */
 export async function headCommit(paths: RunPaths): Promise<string | null> {
   const proc = Bun.spawn(["git", "rev-parse", "HEAD"], { cwd: paths.workspace, stderr: "ignore", stdout: "pipe" });

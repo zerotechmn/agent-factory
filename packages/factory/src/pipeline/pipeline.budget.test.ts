@@ -13,7 +13,7 @@ const fresh = () => createBudget({ capUsd: 15, deployReserveUsd: 1 });
 
 describe("decideAllowance", () => {
   test("gives the requested amount when plenty remains", () => {
-    expect(decideAllowance({ budget: fresh(), canUseReserve: false, minUsd: 0.2, requestedUsd: 7 })).toEqual({
+    expect(decideAllowance({ budget: fresh(), access: "build", minUsd: 0.2, requestedUsd: 7 })).toEqual({
       allowanceUsd: 7,
       kind: "go",
     });
@@ -21,7 +21,7 @@ describe("decideAllowance", () => {
 
   test("never lets ordinary stages spend the deploy reserve", () => {
     const budget = recordSpend(fresh(), { costUsd: 12.5 });
-    expect(decideAllowance({ budget, canUseReserve: false, minUsd: 0.2, requestedUsd: 7 })).toEqual({
+    expect(decideAllowance({ budget, access: "build", minUsd: 0.2, requestedUsd: 7 })).toEqual({
       allowanceUsd: 1.5,
       kind: "go",
     });
@@ -29,17 +29,17 @@ describe("decideAllowance", () => {
 
   test("stops early when the allowance falls below the stage minimum", () => {
     const budget = recordSpend(fresh(), { costUsd: 13.4 });
-    expect(decideAllowance({ budget, canUseReserve: false, minUsd: 1, requestedUsd: 7 }).kind).toBe("stop");
+    expect(decideAllowance({ budget, access: "build", minUsd: 1, requestedUsd: 7 }).kind).toBe("stop");
   });
 
   test("the repair stage may use the reserve, but only up to what it asks for", () => {
     const budget = recordSpend(fresh(), { costUsd: 13.4 });
-    expect(decideAllowance({ budget, canUseReserve: true, minUsd: 0.25, requestedUsd: 0.75 })).toEqual({
+    expect(decideAllowance({ budget, access: "deploy", minUsd: 0.25, requestedUsd: 0.75 })).toEqual({
       allowanceUsd: 0.75,
       kind: "go",
     });
     const nearlySpent = recordSpend(fresh(), { costUsd: 14.5 });
-    expect(decideAllowance({ budget: nearlySpent, canUseReserve: true, minUsd: 0.25, requestedUsd: 0.75 })).toEqual({
+    expect(decideAllowance({ budget: nearlySpent, access: "deploy", minUsd: 0.25, requestedUsd: 0.75 })).toEqual({
       allowanceUsd: 0.5,
       kind: "go",
     });
@@ -48,7 +48,7 @@ describe("decideAllowance", () => {
   test("stops even the repair stage when the cap is fully spent", () => {
     const budget = recordSpend(fresh(), { costUsd: 15.2 });
     expect(remainingUsd(budget)).toBe(0);
-    expect(decideAllowance({ budget, canUseReserve: true, minUsd: 0.25, requestedUsd: 0.75 }).kind).toBe("stop");
+    expect(decideAllowance({ budget, access: "deploy", minUsd: 0.25, requestedUsd: 0.75 }).kind).toBe("stop");
   });
 });
 
@@ -56,16 +56,16 @@ describe("parallel stages", () => {
   test("a committed allowance is not handed out twice", () => {
     // $3 spendable above the reserve; two parallel stages each ask for $2.
     let budget = recordSpend(fresh(), { costUsd: 11 });
-    const first = decideAllowance({ budget, canUseReserve: false, minUsd: 0.2, requestedUsd: 2 });
+    const first = decideAllowance({ budget, access: "build", minUsd: 0.2, requestedUsd: 2 });
     expect(first).toEqual({ allowanceUsd: 2, kind: "go" });
     budget = commitAllowance(budget, 2);
 
-    const second = decideAllowance({ budget, canUseReserve: false, minUsd: 0.2, requestedUsd: 2 });
+    const second = decideAllowance({ budget, access: "build", minUsd: 0.2, requestedUsd: 2 });
     expect(second).toEqual({ allowanceUsd: 1, kind: "go" });
     budget = commitAllowance(budget, 1);
 
     expect(availableUsd(budget)).toBe(1);
-    expect(decideAllowance({ budget, canUseReserve: false, minUsd: 0.2, requestedUsd: 2 }).kind).toBe("stop");
+    expect(decideAllowance({ budget, access: "build", minUsd: 0.2, requestedUsd: 2 }).kind).toBe("stop");
   });
 
   test("finishing a stage books its real cost and frees the unused allowance", () => {
@@ -92,5 +92,25 @@ describe("recordSpend", () => {
 describe("createBudget", () => {
   test("clamps a reserve larger than the cap", () => {
     expect(createBudget({ capUsd: 1, deployReserveUsd: 1.5 }).deployReserveUsd).toBe(1);
+  });
+});
+
+describe("fix reserve", () => {
+  const withFix = () => createBudget({ capUsd: 15, deployReserveUsd: 1, fixReserveUsd: 1.5 });
+
+  test("a big first build can't spend the money the first fix round needs", () => {
+    const budget = recordSpend(withFix(), { costUsd: 6 });
+    expect(decideAllowance({ access: "build", budget, minUsd: 1, requestedUsd: 7 })).toEqual({ allowanceUsd: 6.5, kind: "go" });
+  });
+
+  test("fix stages may use the fix reserve but not the deploy reserve", () => {
+    const budget = recordSpend(withFix(), { costUsd: 12.5 });
+    expect(decideAllowance({ access: "build", budget, minUsd: 0.2, requestedUsd: 1.5 }).kind).toBe("stop");
+    expect(decideAllowance({ access: "repair", budget, minUsd: 1, requestedUsd: 1.5 })).toEqual({ allowanceUsd: 1.5, kind: "go" });
+    expect(decideAllowance({ access: "deploy", budget, minUsd: 0.25, requestedUsd: 3 })).toEqual({ allowanceUsd: 2.5, kind: "go" });
+  });
+
+  test("reserves never exceed the cap, the deploy reserve first", () => {
+    expect(createBudget({ capUsd: 2, deployReserveUsd: 1, fixReserveUsd: 1.5 })).toMatchObject({ deployReserveUsd: 1, fixReserveUsd: 1 });
   });
 });

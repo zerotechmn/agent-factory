@@ -148,3 +148,9 @@ function parseLinks(raw: string): string[] {
     return [];
   }
 }
+
+/** Part of deleting a run; the caller wraps every store's deleteRun in one transaction. */
+export function deleteRun(runId: string): void {
+  db.query("DELETE FROM board_events WHERE run_id = ?").run(runId);
+  db.query("DELETE FROM board_cards WHERE run_id = ?").run(runId);
+}

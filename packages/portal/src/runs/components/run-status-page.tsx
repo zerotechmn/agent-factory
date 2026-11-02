@@ -8,10 +8,12 @@ import {
   RUN_STATUS_LABELS,
   STAGE_DESCRIPTIONS,
   STAGE_STATUS_ICONS,
+  stageDescription,
   TERMINAL_STATUSES,
 } from "../runs.constants";
 import { useBoard, useRun } from "../runs.hooks";
 import { RunLibrarianSummary } from "../../librarian/components/run-librarian-summary";
+import { RunActions } from "./run-actions";
 import { RunFeedback } from "./run-feedback";
 import { RunQuestions } from "./run-questions";
 import type { Activity, Run, Stage } from "../runs.types";
@@ -68,6 +70,7 @@ export function RunStatusPage({ id }: { id: string }) {
       <BoardSummary run={run} />
       <RunLibrarianSummary id={run.id} live={!TERMINAL_STATUSES.includes(run.status)} />
       <StageList run={run} />
+      <RunActions run={run} />
     </Shell>
   );
 }
@@ -177,7 +180,7 @@ function StageRow({ activity, now, stage }: { activity: Activity[]; now: number;
         <span className={`w-4 text-center ${tone} ${running ? "animate-pulse" : ""}`}>{STAGE_STATUS_ICONS[stage.status]}</span>
         <span className="min-w-0 flex-1">
           <span className="block">{stage.label}</span>
-          <span className="block text-xs text-stone-500">{STAGE_DESCRIPTIONS[stage.stageKey]}</span>
+          <span className="block text-xs text-stone-500">{stageDescription(stage.stageKey, stage.label)}</span>
         </span>
         <span className="text-right text-sm tabular-nums text-stone-500">
           {formatUsd(stage.costUsd)}
