@@ -105,8 +105,10 @@ describe("recordLessons", () => {
 
     const found = searchLessons("text breaks mid word overflow");
     expect(found[0]).toMatchObject({ problem: "Words split mid-word on every screen", seen: 2 });
-    expect(topLessons("zt").map((l) => l.seen)).toEqual([2, 1]);
-    expect(topLessons("custom")).toEqual([]);
+    // Other test files share this database, so look only at this test's lessons.
+    const mine = topLessons("zt").filter((l) => ["Words split mid-word on every screen", "Health check timed out"].includes(l.problem));
+    expect(mine.map((l) => l.seen)).toEqual([2, 1]);
+    expect(topLessons("custom").some((l) => l.problem === "Health check timed out")).toBe(false);
   });
 
   test("skips lessons without a problem or fix, or that quote the prompt", () => {

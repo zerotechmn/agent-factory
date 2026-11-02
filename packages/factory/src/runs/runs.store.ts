@@ -9,6 +9,8 @@ export type RunRow = {
   currentStage: string | null;
   designSystem: DesignSystem;
   id: string;
+  /** False for runs nobody watches (benchmark, API scripts): they never pause for the customer. */
+  interactive: boolean;
   prompt: string;
   status: RunStatus;
   stopReason: string | null;
@@ -67,6 +69,9 @@ if (!runColumns.has("design_system")) {
   // Runs from before design systems existed all used the custom-design path.
   db.exec(`UPDATE runs SET design_system = 'custom'`);
 }
+if (!runColumns.has("interactive")) {
+  db.exec("ALTER TABLE runs ADD COLUMN interactive INTEGER NOT NULL DEFAULT 1");
+}
 
 const now = () => new Date().toISOString();
 const toMicro = (usd: number) => Math.round(Math.max(Number(usd ?? 0), 0) * 1_000_000);
@@ -80,6 +85,7 @@ type RawRun = {
   current_stage: string | null;
   design_system: DesignSystem;
   id: string;
+  interactive: number;
   prompt: string;
   status: RunStatus;
   stop_reason: string | null;
@@ -95,6 +101,7 @@ function mapRun(row: RawRun): RunRow {
     currentStage: row.current_stage,
     designSystem: row.design_system,
     id: row.id,
+    interactive: row.interactive !== 0,
     prompt: row.prompt,
     status: row.status,
     stopReason: row.stop_reason,
@@ -106,20 +113,22 @@ export function insertRun({
   budgetUsd,
   designSystem,
   id,
+  interactive,
   ip,
   prompt,
 }: {
   budgetUsd: number;
   designSystem: DesignSystem;
   id: string;
+  interactive: boolean;
   ip: string;
   prompt: string;
 }) {
   const ts = now();
   db.query(
-    `INSERT INTO runs (id, prompt, ip, status, budget_micro_usd, design_system, created_at, updated_at)
-     VALUES (?, ?, ?, 'queued', ?, ?, ?, ?)`,
-  ).run(id, prompt, ip, toMicro(budgetUsd), designSystem, ts, ts);
+    `INSERT INTO runs (id, prompt, ip, status, budget_micro_usd, design_system, interactive, created_at, updated_at)
+     VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
+  ).run(id, prompt, ip, toMicro(budgetUsd), designSystem, interactive ? 1 : 0, ts, ts);
 }
 
 export function getRun(id: string): RunRow | null {
@@ -159,15 +168,15 @@ export function listStages(runId: string): StageRow[] {
 
 export function updateRun(
   id: string,
-  patch: Partial<Pick<RunRow, "appUrl" | "costUsd" | "currentStage" | "status" | "stopReason">>,
+  patch: Partial<Pick<RunRow, "appUrl" | "budgetUsd" | "costUsd" | "currentStage" | "status" | "stopReason">>,
 ) {
   const current = getRun(id);
   if (!current) return;
   const next = { ...current, ...patch };
   db.query(
-    `UPDATE runs SET status = ?, current_stage = ?, cost_micro_usd = ?, app_url = ?, stop_reason = ?, updated_at = ?
+    `UPDATE runs SET status = ?, current_stage = ?, cost_micro_usd = ?, budget_micro_usd = ?, app_url = ?, stop_reason = ?, updated_at = ?
      WHERE id = ?`,
-  ).run(next.status, next.currentStage, toMicro(next.costUsd), next.appUrl, next.stopReason, now(), id);
+  ).run(next.status, next.currentStage, toMicro(next.costUsd), toMicro(next.budgetUsd), next.appUrl, next.stopReason, now(), id);
 }
 
 export function startStage(runId: string, stage: Pick<StageRow, "dirName" | "label" | "seq" | "stageKey">) {
@@ -196,7 +205,8 @@ export function claimNextQueuedRun(): RunRow | null {
 }
 
 export function countRunning(): number {
-  return db.query<{ n: number }, []>("SELECT count(*) AS n FROM runs WHERE status = 'running'").get()?.n ?? 0;
+  // A run waiting for the customer still holds its slot: it resumes without re-queueing.
+  return db.query<{ n: number }, []>("SELECT count(*) AS n FROM runs WHERE status IN ('running', 'waiting_customer')").get()?.n ?? 0;
 }
 
 export function countRunsByIpSince(ip: string, sinceIso: string): number {
@@ -221,7 +231,7 @@ export function failInterruptedRuns(): number {
   const result = db
     .query(
       `UPDATE runs SET status = 'failed', stop_reason = 'Factory restarted while this run was in progress', updated_at = ?
-       WHERE status = 'running'`,
+       WHERE status IN ('running', 'waiting_customer')`,
     )
     .run(now());
   db.query(`UPDATE stages SET status = 'failed', error = 'Interrupted by restart' WHERE status = 'running'`).run();

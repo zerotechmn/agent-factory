@@ -31,12 +31,15 @@ const instanceSchema = z.enum(["live", "acceptance"]).default("live");
 const runSchema = z.object({ instance: instanceSchema, port: z.number().int().min(1).max(65_535).default(8080), runId: runIdSchema });
 const checkSchema = z.object({ instance: instanceSchema, path: z.string().startsWith("/").max(500).default("/health"), runId: runIdSchema });
 const removeSchema = z.object({ instance: z.literal("acceptance"), runId: runIdSchema });
+const rollbackSchema = z.object({ port: z.number().int().min(1).max(65_535).default(8080), runId: runIdSchema });
 
 type Instance = z.infer<typeof instanceSchema>;
 
 const names = (runId: string, instance: Instance = "live") => ({
   container: instance === "acceptance" ? `factory-app-${runId}-acc` : `factory-app-${runId}`,
   image: `factory-app-${runId}:latest`,
+  /** The image the live app ran before the latest build; a failed revision rolls back to it. */
+  previous: `factory-app-${runId}:prev`,
   volume: `factory-app-${runId}-data`,
 });
 
@@ -56,6 +59,7 @@ Bun.serve({
       if (pathname === "/check") return Response.json(await check(checkSchema.parse(body)));
       if (pathname === "/logs") return Response.json(await logs(buildSchema.parse(body)));
       if (pathname === "/remove") return Response.json(await remove(removeSchema.parse(body)));
+      if (pathname === "/rollback") return Response.json(await rollback(rollbackSchema.parse(body)));
       return Response.json({ error: "Not found" }, { status: 404 });
     } catch (error) {
       const status = error instanceof z.ZodError ? 400 : 500;
@@ -70,7 +74,11 @@ async function build({ runId }: { runId: string }) {
   if (!(await Bun.file(join(context, "Dockerfile")).exists())) {
     return { ok: false, output: "No Dockerfile at the workspace root." };
   }
-  const result = await docker(["build", "--progress=plain", "-t", names(runId).image, context], 20 * 60_000);
+  const n = names(runId);
+  // Keep what is live now as :prev before replacing :latest (a no-op on the first build).
+  const live = await docker(["inspect", "-f", "{{.Image}}", n.container], 10_000);
+  if (live.exitCode === 0 && live.output.trim()) await docker(["tag", live.output.trim(), n.previous], 10_000);
+  const result = await docker(["build", "--progress=plain", "-t", n.image, context], 20 * 60_000);
   return { exitCode: result.exitCode, ok: result.exitCode === 0, output: tail(result.output, 150) };
 }
 
@@ -110,6 +118,14 @@ async function run({ instance, port, runId }: { instance: Instance; port: number
   const state = await docker(["inspect", "-f", "{{.State.Status}}", n.container], 10_000);
   const url = instance === "acceptance" ? `http://${n.container}:${port}` : `http://${host}`;
   return { container: n.container, ok: state.output.trim() === "running", state: state.output.trim(), url };
+}
+
+/** Puts the previous image back as :latest and restarts the live app from it. */
+async function rollback({ port, runId }: { port: number; runId: string }) {
+  const n = names(runId);
+  const tagged = await docker(["tag", n.previous, n.image], 10_000);
+  if (tagged.exitCode !== 0) return { ok: false, output: "No previous version to roll back to." };
+  return run({ instance: "live", port, runId });
 }
 
 async function remove({ instance, runId }: { instance: "acceptance"; runId: string }) {

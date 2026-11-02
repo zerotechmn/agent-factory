@@ -137,6 +137,36 @@ Everything after the PRD (about $4.50 of design and development) is built from i
 
 Problems get **one** resumed repair of the requirements session (about $0.10–0.30). Cross-reference problems are always repaired. The other three follow `PRD_GATES`: `advisory` (default) only reports them, in the PRD report, the PRD check report and `SUMMARY.md`; `repair` sends them back to the requirements agent too. Nothing here stops a run.
 
+### Customer questions
+
+Agents never wait for a person mid-session: an idle session's prompt cache expires, and the customer may not be watching. Instead, the researcher and the requirements agent end their stage with questions, and the **factory** pauses between stages and asks in the portal. The run shows as "Waiting for your answers", with a countdown.
+
+| Checkpoint | Asks | Answers go to |
+|---|---|---|
+| After research | Up to 4 questions the prompt leaves open and research can't settle (who the users are, a key rule, essential versus later), each with 2–4 options and the researcher's suggestion | The requirements prompt, where they win over research and the agent's own guesses |
+| After the PRD and PRD check | Decisions the requirements agent flagged for the customer (`askCustomer`, at most 5), the PRD check's gaps ("add it" / "leave it out") and unrequested features ("keep" / "remove"), next to a summary of features, screens and roles | The PRD gates' single repair round, as "Customer feedback" that wins over the agent's choices |
+
+- **Skipped when empty:** a checkpoint without questions doesn't pause.
+- **Answering:** the suggestion is preselected, so "Use the suggestions" or "Approve as is" is one click. "Other" and a free-text box take anything else. Answering continues the run at once.
+- **No answer:** after `CUSTOMER_TIMEOUT_MINUTES` (default 15) the run continues with the agents' choices. If the first checkpoint timed out, the second doesn't wait, since the customer isn't watching.
+- **Cost:** waiting costs no tokens. Resuming the requirements session after more than 5 minutes rewrites its small cache (about $0.05–0.10).
+- **Queue:** a waiting run keeps its run slot, so with `MAX_CONCURRENT_RUNS=1` the next run can wait up to about 30 minutes behind it.
+- **Opting out:** `CUSTOMER_QUESTIONS=off` turns the checkpoints off. Runs created with `interactive: false` never pause; the benchmark sends this.
+- **Record:** `SUMMARY.md` lists every question, its answer, and whether the customer or the agent decided.
+
+### Feedback after deploy
+
+A deployed app's status page has **Feedback on your app**. Sending it starts a feedback round, a revision of the same app at the same address, built from the run's stored data rather than from scratch.
+
+1. **Spec:** a fresh requirements session updates the stored PRD from the feedback. It keeps unchanged items and IDs identical, so the factory can compute exactly what changed (`prdDiff`).
+2. **PRD gates and confirmation:** the PRD gates run, and the customer sees "What will change" and confirms or adjusts it. The 15-minute auto-continue applies.
+3. **Downstream updates:** test cases, architecture, UI design and the acceptance suite each get their previous output plus the change list and return an updated version.
+4. **Code:** the developer runs a change round (`REVISION_DEV_BUDGET_USD`, $2.50) in a **fresh session**, primed with the updated spec and contract and its own earlier handoff. Old agent sessions aren't reused: they live in the container and are lost on rebuilds, and resuming one hours later would rewrite its whole cache.
+5. **Checks and review:** verify, fix rounds and review run as usual; review reads only the round's diff.
+6. **Deploy with rollback:** the deployer keeps the image that was live as `:prev`. If the new version never passes `/health`, `/rollback` puts the previous one back, the round is marked failed, and the app stays live.
+
+The task board moves changed features, screens and their tests back to To do. Each round has its own budget (`REVISION_BUDGET_USD`, default $5) on top of the run's, and is checked against the per-IP limit and the daily spend cap. An app can have at most `MAX_REVISIONS` (default 5) feedback rounds. Returning to a finished run's status page no longer redirects you to the app; the redirect only happens when a build finishes while you watch.
+
 ### Skills
 
 Agents use proven engineering skills, vendored in `packages/factory/skills-plugin/` and loaded as a local plugin. Each agent sees only its own skills.
@@ -204,6 +234,12 @@ Hook notes start with "Librarian:", are capped at 1,200 characters, fire at most
 - **The catalog only contains reviewed code.** `bun packages/factory/scripts/librarian-promote.ts <runId> <name> <path>…` copies files from a fully `deployed` run into `packages/factory/librarian/catalog/<name>/` as a draft. Drafts (`Status: draft` in the README) are not indexed until someone makes the code generic, writes the README and removes that line.
 - **Cost guardrails.** Every call is one more agent turn, so results are capped at 3,000 characters and each step has a call limit (20 for development, 8 for the others). The system prompt asks agents to batch lookups in one turn. Each stage's tool list is fixed, which keeps the prompt cache warm. Lookups themselves take under a millisecond (SQLite FTS5).
 - **Seeing it work.** Every lookup and push is logged in `library_queries`: `auto:lessons` and `auto:catalog` for prompt pushes, `auto:hook-lessons` and `auto:hook-docs` for hook notes, and `limit` when a call hit the step's cap. The Librarian table in `SUMMARY.md` shows per stage what agents asked, how many asks found something, how many pushes had content, and how often the cap was hit. Set `LIBRARIAN=off` to run without it.
+
+**In the portal.** Two read-only pages show customers that the library exists and is used:
+- `/librarian` ("What the factory knows"): documentation per library, the proven modules, the lessons with cause, fix and how many builds they were seen in, and overall counts.
+- `/runs/<id>/librarian` ("How this build used the library"): every lookup an agent made and everything the factory handed over, with what came back named in words (e.g. "antd@6 › table › API", a lesson's problem), per-stage counts, and the lessons that build taught the factory. The run status page links to it, with a one-line summary.
+
+The portal has no login, so the global page shows only shared knowledge and totals, never another run's queries or ids. A run's lookups appear only under that run's id, like its board and reports. API: `GET /api/librarian` and `GET /api/runs/:id/librarian` (`src/librarian/librarian.routes.ts`). Each logged lookup stores refs to what it returned (`results`: `lesson:<id>`, `doc:<id>`, `catalog:<name>`, `spec:<id>`). Rows logged before that column existed show counts only.
 
 Tables: `library_lessons`, `library_docs`, `library_catalog` (each with an FTS5 index), `library_index_meta`, `library_queries`.
 

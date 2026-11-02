@@ -65,3 +65,41 @@ export function slicePrd<T>(handoff: unknown, slice: (prd: Prd) => T): T | unkno
   const prd = asPrd(handoff);
   return prd ? slice(prd) : handoff;
 }
+
+export type PrdDiff = { added: string[]; changed: string[]; removed: string[] };
+
+/**
+ * What a revision changed, by id: features, screens and business rules that
+ * were added, changed (any field differs) or removed. Built by code, so the
+ * customer and every revise prompt see the same exact list.
+ */
+export function prdDiff(before: Prd, after: Prd): PrdDiff {
+  const diff: PrdDiff = { added: [], changed: [], removed: [] };
+  const groups: [{ id: string }[], { id: string }[]][] = [
+    [before.features, after.features],
+    [before.screens, after.screens],
+    [before.businessRules, after.businessRules],
+  ];
+  for (const [old, next] of groups) {
+    const oldById = new Map(old.map((item) => [item.id, JSON.stringify(item)]));
+    const nextIds = new Set(next.map((item) => item.id));
+    for (const item of next) {
+      const previous = oldById.get(item.id);
+      if (previous === undefined) diff.added.push(item.id);
+      else if (previous !== JSON.stringify(item)) diff.changed.push(item.id);
+    }
+    for (const id of oldById.keys()) if (!nextIds.has(id)) diff.removed.push(id);
+  }
+  return diff;
+}
+
+/** One line per change, with names, for the customer and the revise prompts. */
+export function describePrdDiff(diff: PrdDiff, before: Prd, after: Prd): string[] {
+  const name = (prd: Prd, id: string) =>
+    prd.features.find((f) => f.id === id)?.name ?? prd.screens.find((s) => s.id === id)?.name ?? prd.businessRules.find((r) => r.id === id)?.rule ?? "";
+  return [
+    ...diff.added.map((id) => `Added ${id}: ${name(after, id)}`),
+    ...diff.changed.map((id) => `Changed ${id}: ${name(after, id)}`),
+    ...diff.removed.map((id) => `Removed ${id}: ${name(before, id)}`),
+  ];
+}

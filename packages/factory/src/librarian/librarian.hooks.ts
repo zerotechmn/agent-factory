@@ -14,7 +14,7 @@ import { librarianToolsets } from "./librarian.tools";
 
 export type HookState = { injected: number; seen: Set<string> };
 
-export type Hint = { hits: number; key: string; query: string; text: string; tool: "auto:hook-docs" | "auto:hook-lessons" };
+export type Hint = { hits: number; key: string; query: string; results: string[]; text: string; tool: "auto:hook-docs" | "auto:hook-lessons" };
 
 const LESSON_HINT_LIMIT = Math.min(2, FAILURE_LESSON_LIMIT);
 
@@ -55,12 +55,13 @@ export function lessonHint(state: HookState, output: string, failed: boolean): H
   state.seen.add(key);
   const lessons = LibrarianService.lessonsForOutput(output, LESSON_HINT_LIMIT);
   const query = lines.join(" ");
-  if (lessons.length === 0) return { hits: 0, key, query, text: "", tool: "auto:hook-lessons" };
+  if (lessons.length === 0) return { hits: 0, key, query, results: [], text: "", tool: "auto:hook-lessons" };
   state.injected += 1;
   return {
     hits: lessons.length,
     key,
     query,
+    results: lessons.map((l) => `lesson:${l.id}`),
     text: LibrarianService.clip(
       `Librarian: earlier factory runs fixed a similar failure. Check whether it applies before debugging further:\n${LibrarianService.formatLessons(lessons)}`,
       HOOK_MAX_CHARS,
@@ -75,22 +76,25 @@ export function docHint(state: HookState, content: string): Hint | null {
   const lookups = importLookups(content).filter((lookup) => !state.seen.has(lookup.key));
   if (lookups.length === 0) return null;
   const lines: string[] = [];
+  const results: string[] = [];
   for (const lookup of lookups.slice(0, 4)) {
     state.seen.add(lookup.key);
     // A component or hook has its own page (DatePicker → date-picker, useNavigate → use-navigate); search is the fallback.
     const page = lookup.page ? LibrarianStore.pageSections(lookup.library, lookup.page, 2) : [];
     for (const chunk of page.length ? page : LibrarianService.searchDocs(lookup.query, lookup.library).slice(0, 2)) {
       lines.push(`- ${chunk.id} (${chunk.title})`);
+      results.push(`doc:${chunk.id}`);
     }
   }
   const query = lookups.map((l) => `${l.library}: ${l.query}`).join("; ");
   const key = lookups.map((l) => l.key).join("|");
-  if (lines.length === 0) return { hits: 0, key, query, text: "", tool: "auto:hook-docs" };
+  if (lines.length === 0) return { hits: 0, key, query, results: [], text: "", tool: "auto:hook-docs" };
   state.injected += 1;
   return {
     hits: lines.length,
     key,
     query,
+    results: [...new Set(results)],
     text: LibrarianService.clip(
       `Librarian: version-pinned docs for what this file uses. Open one with docs_read <id> if you're not certain of the API:\n${[...new Set(lines)].join("\n")}`,
       HOOK_MAX_CHARS,
@@ -143,7 +147,7 @@ export function librarianHooks({
 
   const respond = (event: "PostToolUse" | "PostToolUseFailure", hint: Hint | null): HookJSONOutput => {
     if (!hint) return { continue: true };
-    LibrarianStore.logQuery({ at: new Date().toISOString(), hits: hint.hits, query: hint.query.slice(0, 500), runId, stage, tool: hint.tool });
+    LibrarianStore.logQuery({ at: new Date().toISOString(), hits: hint.hits, query: hint.query.slice(0, 500), results: hint.results, runId, stage, tool: hint.tool });
     if (!hint.text) return { continue: true };
     return { continue: true, hookSpecificOutput: { additionalContext: hint.text, hookEventName: event } };
   };

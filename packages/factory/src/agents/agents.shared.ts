@@ -26,6 +26,10 @@ export type StageContext = {
   libraryIndex: { catalog: { name: string; summary: string }[]; docs: string[] } | null;
   /** Librarian tools this stage can call; empty when the librarian is off or the stage has none. */
   librarianToolsets: LibrarianToolset[];
+  /** Set while a deployed app is being revised from customer feedback. */
+  revision: { changes: string[]; feedback: string; n: number } | null;
+  /** The customer's answers and feedback, rendered for the prompt; null when there are none. */
+  customerInput: string | null;
   /** Problems the factory found in this agent's previous output, for it to correct. */
   repairIssues: string[] | null;
   /** Present on re-reviews: only the changes since the last review need reading. */

@@ -93,8 +93,12 @@ export const prdSchema = z.object({
   decisions: z
     .array(
       z.object({
-        decision: z.string(),
+        askCustomer: z
+          .boolean()
+          .describe("True only for a choice the customer could reasonably want to make themselves (scope, a rule, who can do what); at most 5"),
+        decision: z.string().describe("Your choice; when askCustomer, it must be one of the options"),
         id: z.string().describe("OQ-xx"),
+        options: z.array(z.string()).max(4).describe('2-4 short alternatives when askCustomer, otherwise []'),
         question: z.string(),
         rationale: z.string(),
       }),

@@ -27,7 +27,7 @@ const schema = z.object({
 
 export const developmentAgent: AgentDefinition<typeof schema> = {
   allowedTools: [...CODE_TOOLS, ...DEVELOPMENT_TOOL_NAMES],
-  buildPrompt: (ctx) => (ctx.fix ? fixPrompt(ctx) : buildPrompt(ctx)),
+  buildPrompt: (ctx) => (ctx.fix ? fixPrompt(ctx) : ctx.revision ? changePrompt(ctx) : buildPrompt(ctx)),
   cwd: (ctx) => ctx.workspaceDir,
   mcpServers: (ctx) => ({ browser: developmentMcpServer(ctx.stageDir, ctx.checkMobile) }),
   role: "Developer",
@@ -94,6 +94,39 @@ ${jsonBlock("Review findings", fix?.review ?? null)}${
       ? ""
       : `\n\n${jsonBlock("PRD", ctx.handoffs.requirements)}\n\n${jsonBlock("Architecture", ctx.handoffs.architecture)}`
   }`;
+}
+
+/**
+ * A change round on a live app: a fresh session (the original one is gone
+ * after a factory rebuild, and resuming it hours later would re-write its
+ * whole cache), primed with the stored spec, contract and the developer's
+ * own handoff instead of re-reading the codebase.
+ */
+function changePrompt(ctx: StageContext): string {
+  const revision = ctx.revision!;
+  return `The app in the current directory is live. The customer gave feedback, and the spec, test plan, architecture and UI design have been updated for it. Implement only those changes.
+
+Start with \`git log --stat -5\` and the files the changes touch; read only what you need. Keep everything else working exactly as it is.
+
+Load factory:test-driven-development and factory:verification-before-completion with the Skill tool (and the design-system skill for UI changes) and follow them: add or update tests for the changed test cases first (named after their ids, e.g. "TC-31: …"), then change the code. Then run install and the full test suite with the exact commands below, start the server, curl /health, and call browser_check on the screens you changed. Report every screen path in screens and the commands in your output, as before.
+
+Implement the API exactly as the updated architecture contract says. The independent tester's acceptance tests are being updated in parallel and will run against your container in verify.
+
+## Customer feedback
+
+${revision.feedback}
+
+## What changed in the spec
+
+${revision.changes.length ? revision.changes.map((c) => `- ${c}`).join("\n") : "- (no spec items changed; the feedback is about how existing behaviour works)"}
+
+${jsonBlock("Your previous handoff (commands, screens, known gaps)", ctx.handoffs.development)}
+
+${jsonBlock("PRD (updated)", ctx.handoffs.requirements)}
+
+${jsonBlock("Test plan (updated)", ctx.handoffs.testCases)}
+
+${jsonBlock("Architecture (updated contract)", ctx.handoffs.architecture)}${ctx.handoffs.uiDesign ? `\n\n${jsonBlock("UI/UX design (updated)", ctx.handoffs.uiDesign)}` : ""}`;
 }
 
 function summarizeGate(gate: StageContext["gate"]) {

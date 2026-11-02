@@ -151,6 +151,9 @@ export const MAX_FIX_ATTEMPTS = 2;
 /** Port every generated app must listen on inside its container (overridable via $PORT). */
 export const APP_PORT = 8080;
 
+/** The developer's change round in a feedback round on a deployed app. */
+export const REVISION_DEV_BUDGET_USD = 2.5;
+
 /** One resumed session to fix acceptance files that don't parse. */
 export const ACCEPTANCE_REPAIR_BUDGET_USD = 0.2;
 

@@ -1,4 +1,7 @@
+import { NotFoundError } from "../lib/errors";
 import type { GateResult } from "../pipeline/pipeline.gate";
+import { runIdSchema } from "../runs/runs.dto";
+import * as RunsStore from "../runs/runs.store";
 import type { DesignSystem } from "../pipeline/pipeline.types";
 import { config } from "../lib/config";
 import {
@@ -12,7 +15,7 @@ import {
   type LessonStep,
 } from "./librarian.constants";
 import * as LibrarianStore from "./librarian.store";
-import type { CatalogItem, DocChunk, Lesson, LessonInput } from "./librarian.types";
+import type { CatalogItem, DocChunk, Lesson, LessonInput, LibraryOverview, RunLibrarian } from "./librarian.types";
 
 /** A lesson reported by a repair agent, waiting for a later verify to prove the fix worked. */
 export type PendingLesson = LessonInput & { reportedBy: string };
@@ -212,14 +215,35 @@ export function lessonsForFailure({
   const match = ftsQuery(text, { exact: true, maxWords: 24 });
   if (!match) return [];
   return LibrarianStore.searchLessons(match, RANKING_POOL)
-    .filter((lesson) => steps.has(lesson.step))
+    .filter((lesson) => steps.has(lesson.step) && sharesWords(lesson, text))
     .slice(0, limit);
 }
 
 /** Lessons for a failing command's output mid-session, when the agent hasn't asked. */
 export function lessonsForOutput(output: string, limit: number): Lesson[] {
-  const match = ftsQuery(errorLines(output).join(" "), { exact: true, maxWords: 24 });
-  return match ? LibrarianStore.searchLessons(match, limit) : [];
+  const text = errorLines(output).join(" ");
+  const match = ftsQuery(text, { exact: true, maxWords: 24 });
+  return match ? LibrarianStore.searchLessons(match, RANKING_POOL).filter((lesson) => sharesWords(lesson, text)).slice(0, limit) : [];
+}
+
+/** Words too common in error output to say two failures are the same problem. */
+const COMMON_WORDS = new Set(
+  "a an and are at be but by can error errors expected fail failed failing for from got in is it no not of ok on or the to was when with".split(" "),
+);
+
+/**
+ * A pushed lesson must share at least two meaningful words with the failure.
+ * FTS ranks any single shared word as a match, and one word ("listen",
+ * "server") is how unrelated lessons end up in a repair prompt.
+ */
+export function sharesWords(lesson: Pick<Lesson, "fix" | "problem" | "rootCause" | "tags">, text: string): boolean {
+  const meaningful = (value: string) => new Set(words(value).filter((w) => w.length >= 3 && !COMMON_WORDS.has(w)));
+  const failure = meaningful(text);
+  let shared = 0;
+  for (const word of meaningful(`${lesson.problem} ${lesson.rootCause} ${lesson.fix} ${lesson.tags.join(" ")}`)) {
+    if (failure.has(word) && ++shared >= 2) return true;
+  }
+  return false;
 }
 
 export function formatLessons(lessons: Lesson[]): string {
@@ -246,6 +270,43 @@ export function formatDocHits(chunks: DocChunk[]): string {
 export function searchCatalog(query: string): CatalogItem[] {
   const match = ftsQuery(query);
   return match ? LibrarianStore.searchCatalog(match, SEARCH_LIMIT) : [];
+}
+
+// ---- portal views ----
+
+/** Lessons shown on the public library page; enough to show it learns without paging. */
+const OVERVIEW_LESSON_LIMIT = 100;
+
+export function getOverview(): LibraryOverview {
+  return LibrarianStore.overview(OVERVIEW_LESSON_LIMIT);
+}
+
+/**
+ * Everything the librarian did for one run, with each returned item named
+ * in words ("antd@6 › table › API", a lesson's problem) instead of its ref.
+ */
+export function getRunLibrarian(runId: string): RunLibrarian {
+  if (!runIdSchema.safeParse(runId).success || !RunsStore.getRun(runId)) throw new NotFoundError("Run not found");
+  const events = LibrarianStore.runActivity(runId);
+  const refs = events.flatMap((e) => e.results);
+  const lessonIds = refs.filter((r) => r.startsWith("lesson:")).map((r) => Number(r.slice("lesson:".length))).filter(Number.isFinite);
+  const docIds = refs.filter((r) => r.startsWith("doc:")).map((r) => r.slice("doc:".length));
+  const lessons = LibrarianStore.lessonTitles([...new Set(lessonIds)]);
+  const docs = LibrarianStore.docTitles([...new Set(docIds)]);
+  const titleOf = (ref: string): string => {
+    const [kind, ...rest] = ref.split(":");
+    const id = rest.join(":");
+    if (kind === "lesson") return lessons.get(Number(id)) ?? "A lesson";
+    if (kind === "doc") return docs.get(id) ?? id;
+    if (kind === "catalog") return `Catalog: ${id}`;
+    if (kind === "spec") return `Spec ${id}`;
+    return ref;
+  };
+  return {
+    events: events.map((e) => ({ ...e, results: e.results.map((ref) => ({ ref, title: titleOf(ref) })) })),
+    lessonsLearned: LibrarianStore.lessonsFromRun(runId),
+    stats: LibrarianStore.queryStats(runId),
+  };
 }
 
 function escapeRegExp(text: string): string {

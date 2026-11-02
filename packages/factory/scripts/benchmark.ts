@@ -40,7 +40,8 @@ async function run(name: string): Promise<void> {
   const record: BenchmarkRecord = { gitCommit: gitCommit(), label: name, runs: [], startedAt: new Date().toISOString() };
   for (const p of prompts) {
     const response = await fetch(`${API_URL}/api/runs`, {
-      body: JSON.stringify({ designSystem: p.designSystem, prompt: p.prompt }),
+      // Nobody answers benchmark runs; they must never pause for the customer.
+      body: JSON.stringify({ designSystem: p.designSystem, interactive: false, prompt: p.prompt }),
       headers: { "content-type": "application/json", "x-benchmark-token": token },
       method: "POST",
     });

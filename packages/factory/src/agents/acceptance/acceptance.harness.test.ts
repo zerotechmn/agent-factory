@@ -99,3 +99,19 @@ describe("acceptance harness", () => {
     expect(code).toBe(0);
   });
 });
+
+describe("acceptance harness with a browser", () => {
+  test("several withPage tests in one file share one browser that stays open until the file ends", async () => {
+    const hasChromium = Bun.spawnSync(["node", "-e", "require('playwright').chromium.executablePath() && require('node:fs').accessSync(require('playwright').chromium.executablePath())"]).exitCode === 0;
+    if (!hasChromium) return; // Chromium lives in the factory image; skip on machines without it.
+    const { code, out } = await runNode(
+      `import assert from "node:assert/strict"; import { test } from "node:test"; import { withPage } from "HARNESS";
+       for (const n of [1, 2, 3]) test(\`TC-\${n}: page \${n}\`, async () => {
+         await withPage(async (page) => { const r = await page.goto("/api/items-missing"); assert.equal(r.status(), 404); });
+       });`,
+      { kind: "none" },
+    );
+    expect(out).toContain("ok 3 - TC-3: page 3");
+    expect(code).toBe(0);
+  }, 60_000);
+});

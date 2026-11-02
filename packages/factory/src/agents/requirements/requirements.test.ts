@@ -26,8 +26,10 @@ function examplePrd(): Prd {
     constraints: [],
     decisions: [
       {
+        askCustomer: true,
         decision: "Захирал л батална",
         id: "OQ-01",
+        options: ["Захирал л батална", "Орлогч батална"],
         question: "Захирал байхгүй үед хэн 5 саяас дээш захиалга батлах вэ?",
         rationale: "MVP-д орлон гүйцэтгэгч хэрэггүй",
       },

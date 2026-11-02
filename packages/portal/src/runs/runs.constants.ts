@@ -9,6 +9,7 @@ export const RUN_STATUS_LABELS: Record<RunStatus, string> = {
   failed_budget: "Stopped: budget exhausted",
   queued: "Queued",
   running: "Building",
+  waiting_customer: "Waiting for your answers",
 };
 
 export const STAGE_STATUS_ICONS: Record<StageStatus, string> = {

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 
 import { DESIGN_SYSTEM_OPTIONS } from "../runs.constants";
 import { useCreateRun } from "../runs.hooks";
@@ -96,6 +96,10 @@ export function NewRunPage() {
           ))}
         </ul>
       </div>
+
+      <Link href="/librarian" className="mt-10 inline-block text-sm text-stone-600 underline underline-offset-4 hover:text-stone-900">
+        What the factory knows →
+      </Link>
     </main>
   );
 }

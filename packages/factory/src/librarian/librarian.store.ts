@@ -1,7 +1,7 @@
 import { db } from "../lib/db";
 import type { DesignSystem } from "../pipeline/pipeline.types";
 import type { LessonStep } from "./librarian.constants";
-import type { CatalogItem, DocChunk, Lesson, LessonInput, QueryStat } from "./librarian.types";
+import type { CatalogItem, DocChunk, Lesson, LessonInput, LibraryOverview, QueryEvent, QueryStat } from "./librarian.types";
 
 // FTS5 tables are standalone and share their rowid with the base table, so
 // one transaction keeps both in step without triggers.
@@ -59,6 +59,13 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS library_queries_run ON library_queries (run_id, id);
 `);
+
+// Added after the first release: refs to what each lookup returned (lesson:12, doc:<id>, catalog:<name>, spec:<id>),
+// so a run's page can show what was handed over, not just how many items.
+const queryColumns = db.query<{ name: string }, []>("PRAGMA table_info(library_queries)").all();
+if (!queryColumns.some((c) => c.name === "results")) {
+  db.exec("ALTER TABLE library_queries ADD COLUMN results TEXT NOT NULL DEFAULT '[]'");
+}
 
 type RawLesson = {
   design_system: DesignSystem;
@@ -219,15 +226,93 @@ export function getCatalogItem(name: string): CatalogItem | null {
 
 // ---- usage log ----
 
-export function logQuery(entry: { at: string; hits: number; query: string; runId: string; stage: string; tool: string }): void {
-  db.query("INSERT INTO library_queries (run_id, stage, tool, query, hits, at) VALUES (?, ?, ?, ?, ?, ?)").run(
+export function logQuery(entry: { at: string; hits: number; query: string; results?: string[]; runId: string; stage: string; tool: string }): void {
+  db.query("INSERT INTO library_queries (run_id, stage, tool, query, hits, results, at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
     entry.runId,
     entry.stage,
     entry.tool,
     entry.query,
     entry.hits,
+    JSON.stringify(entry.results ?? []),
     entry.at,
   );
+}
+
+/** One run's lookups and hand-overs in order, for that run's own page. */
+export function runActivity(runId: string): QueryEvent[] {
+  return db
+    .query<{ at: string; hits: number; id: number; query: string; results: string; stage: string; tool: string }, [string]>(
+      "SELECT id, at, stage, tool, query, hits, results FROM library_queries WHERE run_id = ? ORDER BY id",
+    )
+    .all(runId)
+    .map((row) => ({ ...row, results: parseStrings(row.results) }));
+}
+
+/** Lessons this run added, or proved again. */
+export function lessonsFromRun(runId: string): Lesson[] {
+  return db
+    .query<RawLesson, [string, string]>("SELECT * FROM library_lessons WHERE first_run_id = ? OR last_run_id = ? ORDER BY id")
+    .all(runId, runId)
+    .map(toLesson);
+}
+
+export function lessonTitles(ids: number[]): Map<number, string> {
+  if (ids.length === 0) return new Map();
+  const rows = db
+    .query<{ id: number; problem: string }, number[]>(`SELECT id, problem FROM library_lessons WHERE id IN (${ids.map(() => "?").join(",")})`)
+    .all(...ids);
+  return new Map(rows.map((r) => [r.id, r.problem]));
+}
+
+export function docTitles(chunkIds: string[]): Map<string, string> {
+  if (chunkIds.length === 0) return new Map();
+  const rows = db
+    .query<{ chunk_id: string; title: string }, string[]>(`SELECT chunk_id, title FROM library_docs WHERE chunk_id IN (${chunkIds.map(() => "?").join(",")})`)
+    .all(...chunkIds);
+  return new Map(rows.map((r) => [r.chunk_id, r.title]));
+}
+
+/**
+ * The shared library and usage counts across all runs. Only knowledge meant
+ * for every run (docs, catalog, lessons) and totals: never another run's
+ * queries or ids, since the portal has no login.
+ */
+export function overview(lessonLimit: number): LibraryOverview {
+  const docs = db
+    .query<{ library: string; sections: number }, []>("SELECT library, count(*) AS sections FROM library_docs GROUP BY library ORDER BY library")
+    .all();
+  const catalog = db
+    .query<RawCatalog, []>("SELECT * FROM library_catalog ORDER BY name")
+    .all()
+    .map(toCatalogItem)
+    .map((item) => ({ files: item.files.length, name: item.name, summary: item.summary, tags: item.tags }));
+  const lessons = db
+    .query<RawLesson & { updated_at: string }, [number]>("SELECT * FROM library_lessons ORDER BY seen DESC, id DESC LIMIT ?")
+    .all(lessonLimit)
+    .map((row) => ({ ...toLesson(row), updatedAt: row.updated_at }));
+  const usage = db
+    .query<{ lookups: number; pushes: number; runs: number; with_hits: number }, []>(
+      `SELECT count(DISTINCT run_id) AS runs,
+              count(*) FILTER (WHERE tool NOT LIKE 'auto:%' AND tool <> 'limit') AS lookups,
+              count(*) FILTER (WHERE tool NOT LIKE 'auto:%' AND tool <> 'limit' AND hits > 0) AS with_hits,
+              count(*) FILTER (WHERE tool LIKE 'auto:%' AND hits > 0) AS pushes
+       FROM library_queries`,
+    )
+    .get();
+  const lessonCount = db.query<{ n: number }, []>("SELECT count(*) AS n FROM library_lessons").get()?.n ?? 0;
+  return {
+    catalog,
+    docs,
+    lessons,
+    totals: {
+      docSections: docs.reduce((sum, d) => sum + d.sections, 0),
+      lessons: lessonCount,
+      lookups: usage?.lookups ?? 0,
+      lookupsWithHits: usage?.with_hits ?? 0,
+      pushes: usage?.pushes ?? 0,
+      runs: usage?.runs ?? 0,
+    },
+  };
 }
 
 /** Pulls are the agent's own tool calls; auto rows are what the factory pushed; "limit" rows are calls refused at the cap. */

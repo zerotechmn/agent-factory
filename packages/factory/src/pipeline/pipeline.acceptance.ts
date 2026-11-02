@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -44,6 +44,10 @@ export async function checkAcceptanceFiles(handoff: Acceptance, scratchDir: stri
 export async function installAcceptance(paths: RunPaths, handoff: Acceptance): Promise<string | null> {
   const dir = join(paths.workspace, ACCEPTANCE_DIR);
   await mkdir(dir, { recursive: true });
+  // A feedback round replaces the whole suite: tests for removed behaviour must go too.
+  for (const old of await readdir(dir).catch(() => [] as string[])) {
+    if (old.endsWith(".test.mjs")) await rm(join(dir, old), { force: true });
+  }
   await copyFile(HARNESS, join(dir, "harness.mjs"));
   await writeFile(join(dir, "harness.config.json"), `${JSON.stringify({ auth: handoff.auth }, null, 2)}\n`);
   for (const file of handoff.files.filter((f) => FILE_PATH.test(f.path))) await writeFile(join(paths.workspace, file.path), file.content);

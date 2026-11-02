@@ -7,6 +7,7 @@
 // against a throwaway copy of the app (BASE_URL), never the live one.
 
 import { readFileSync } from "node:fs";
+import { after } from "node:test";
 
 export const BASE_URL = (process.env.BASE_URL ?? "http://127.0.0.1:8080").replace(/\/$/, "");
 
@@ -114,13 +115,18 @@ async function authHeaders(role) {
 }
 
 let browserPromise = null;
+
+// Registered at module level so it runs once after the whole file. Registered
+// inside the first browser test (as before run jjutq37djz), node:test ran it
+// after that test, closing the browser for every later one.
+after(async () => {
+  if (browserPromise) await (await browserPromise).close();
+});
 async function sharedBrowser() {
   if (!browserPromise) {
     // Playwright comes from the factory image, not the app: PLAYWRIGHT_MODULE points at it.
     const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ?? "playwright");
     browserPromise = chromium.launch();
-    const { after } = await import("node:test");
-    after(async () => (await browserPromise).close());
   }
   return browserPromise;
 }

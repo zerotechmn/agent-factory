@@ -220,6 +220,22 @@ export function onVerify(
   }
 }
 
+/**
+ * A feedback round changed the spec: changed features and screens, and the
+ * tests linked to them, go back to To do; removed ones say so. New items are
+ * seeded by onRequirements / onTestPlan as their stages finish.
+ */
+export function onRevision(runId: string, diff: { added: string[]; changed: string[]; removed: string[] }, { actor, at = now() }: Stamp): void {
+  const cards = BoardStore.listCards(runId);
+  const changed = new Set(diff.changed);
+  for (const card of cards) {
+    if (changed.has(card.id) || (card.kind === "test" && card.links.some((id) => changed.has(id)))) {
+      BoardStore.moveCard(runId, card.id, "todo", { actor, at, note: `Changed by ${actor.toLowerCase()}` });
+    }
+    if (diff.removed.includes(card.id)) BoardStore.moveCard(runId, card.id, card.column, { actor, at, note: `Removed by ${actor.toLowerCase()}` });
+  }
+}
+
 /** Board updates are reporting only: a bug here must never fail a build. */
 export function safely(label: string, fn: () => void | Promise<void>): Promise<void> {
   return Promise.resolve()
@@ -230,7 +246,7 @@ export function safely(label: string, fn: () => void | Promise<void>): Promise<v
 /** Replays a finished run's stage folders through the same handlers the live pipeline uses. */
 async function backfill(runId: string): Promise<void> {
   const run = RunsStore.getRun(runId);
-  if (!run || run.status === "queued" || run.status === "running") return;
+  if (!run || run.status === "queued" || run.status === "running" || run.status === "waiting_customer") return;
   const paths = runPaths(config.DATA_DIR, runId);
   const read = async (dirName: string, file: string) => readFile(join(paths.stages, dirName, file), "utf8").catch(() => null);
   const json = async (dirName: string) => {

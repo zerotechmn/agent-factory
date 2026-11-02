@@ -11,6 +11,14 @@ export async function getRun(id: string) {
   return respond(async () => RunsService.getRunDetail(id));
 }
 
+export async function answerQuestions(id: string, body: unknown) {
+  return respond(async () => RunsService.answerQuestions(id, body), { message: "Thanks, the run continues" });
+}
+
+export async function submitFeedback({ body, id, ip }: { body: unknown; id: string; ip: string }) {
+  return respond(async () => RunsService.submitFeedback({ body, id, ip }), { message: "Feedback received; the app is being updated", status: 201 });
+}
+
 export async function getBoard(id: string) {
   return respond(async () => RunsService.getBoard(id));
 }

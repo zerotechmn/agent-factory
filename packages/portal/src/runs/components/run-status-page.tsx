@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 
 import {
@@ -11,6 +11,9 @@ import {
   TERMINAL_STATUSES,
 } from "../runs.constants";
 import { useBoard, useRun } from "../runs.hooks";
+import { RunLibrarianSummary } from "../../librarian/components/run-librarian-summary";
+import { RunFeedback } from "./run-feedback";
+import { RunQuestions } from "./run-questions";
 import type { Activity, Run, Stage } from "../runs.types";
 import { clockTime, formatUsd, percentOf } from "../runs.utils";
 
@@ -18,9 +21,12 @@ export function RunStatusPage({ id }: { id: string }) {
   const { data: run, error, isLoading } = useRun(id);
   const [redirectCancelled, setRedirectCancelled] = useState(false);
   const live = run?.appUrl && (run.status === "deployed" || run.status === "deployed_partial");
+  // Redirect only when the build finishes while you watch; coming back later (e.g. to give feedback) stays here.
+  const watchedBuild = useRef(false);
+  if (run && !TERMINAL_STATUSES.includes(run.status)) watchedBuild.current = true;
 
   useEffect(() => {
-    if (!live || redirectCancelled || !run?.appUrl) return;
+    if (!live || redirectCancelled || !run?.appUrl || !watchedBuild.current) return;
     const timer = setTimeout(() => window.location.assign(run.appUrl!), REDIRECT_DELAY_MS);
     return () => clearTimeout(timer);
   }, [live, redirectCancelled, run?.appUrl]);
@@ -41,11 +47,16 @@ export function RunStatusPage({ id }: { id: string }) {
         <span className="flex gap-4 text-sm">
           <Link href={`/runs/${run.id}/board`} className="text-stone-600 underline underline-offset-4">Task board</Link>
           <Link href={`/runs/${run.id}/details`} className="text-stone-600 underline underline-offset-4">Agent reports</Link>
+          <Link href={`/runs/${run.id}/librarian`} className="text-stone-600 underline underline-offset-4">Library</Link>
         </span>
       </div>
       <p className="mt-2 line-clamp-3 text-stone-600">{run.prompt}</p>
 
-      {live && <LiveBanner appUrl={run.appUrl!} onCancel={() => setRedirectCancelled(true)} redirecting={!redirectCancelled} />}
+      {live && (
+        <LiveBanner appUrl={run.appUrl!} onCancel={() => setRedirectCancelled(true)} redirecting={!redirectCancelled && watchedBuild.current} />
+      )}
+      {(live || run.revisions.length > 0) && <RunFeedback canSubmit={Boolean(live)} revisions={run.revisions} runId={run.id} />}
+      {run.status === "waiting_customer" && run.questions && <RunQuestions key={run.questions.checkpoint} open={run.questions} runId={run.id} />}
       {run.status === "queued" && run.queuePosition !== null && (
         <p className="mt-6 rounded-md bg-stone-100 p-3 text-sm">Waiting in queue — position {run.queuePosition}.</p>
       )}
@@ -55,6 +66,7 @@ export function RunStatusPage({ id }: { id: string }) {
 
       <BudgetBar run={run} />
       <BoardSummary run={run} />
+      <RunLibrarianSummary id={run.id} live={!TERMINAL_STATUSES.includes(run.status)} />
       <StageList run={run} />
     </Shell>
   );
@@ -129,7 +141,7 @@ function BoardSummary({ run }: { run: Run }) {
 function StageList({ run }: { run: Run }) {
   // Show executed stages, then the not-yet-started part of the planned sequence.
   const started = new Set(run.stages.map((stage) => stage.label));
-  const done = run.status !== "queued" && run.status !== "running";
+  const done = TERMINAL_STATUSES.includes(run.status);
   const pending = done ? [] : PLANNED_STAGES.filter((stage) => !started.has(stage.label));
   const now = Date.now();
 

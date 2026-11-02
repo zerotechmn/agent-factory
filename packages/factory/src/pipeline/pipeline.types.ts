@@ -34,6 +34,8 @@ export const DEFAULT_DESIGN_SYSTEM: DesignSystem = "zt";
 export const RUN_STATUSES = [
   "queued",
   "running",
+  // Paused between stages for the customer's answers; still holds its run slot.
+  "waiting_customer",
   "deployed",
   "deployed_partial",
   "failed",
