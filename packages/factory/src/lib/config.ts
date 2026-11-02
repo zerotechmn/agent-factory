@@ -21,7 +21,12 @@ const envSchema = z.object({
   /** on: the researcher and requirements agents may ask the customer questions between stages. */
   CUSTOMER_QUESTIONS: z.enum(["on", "off"]).default("on"),
   /** How long a run waits for the customer's answers before continuing with the agents' own choices. */
-  CUSTOMER_TIMEOUT_MINUTES: z.coerce.number().positive().default(15),
+  CUSTOMER_TIMEOUT_MINUTES: z.coerce.number().positive().default(5),
+  /**
+   * on: a run only waits for answers while someone has its page open, and
+   * continues at once with the agents' choices when nobody is watching.
+   */
+  CUSTOMER_WAIT_ONLY_IF_WATCHING: z.enum(["on", "off"]).default("on"),
   DAILY_SPEND_CAP_USD: z.coerce.number().positive().default(100),
   DATA_DIR: z.string().default("./data"),
   DEPLOYER_URL: z.string().default("http://localhost:4100"),
@@ -37,6 +42,12 @@ const envSchema = z.object({
   /** Host port Traefik is published on; included in app URLs when it isn't 80. */
   PUBLIC_HTTP_PORT: z.coerce.number().int().positive().default(80),
   /** Most feedback rounds one deployed app can get. */
+  /** "on": larger apps are built as a scaffold, one session per feature group, and a finish. "off": one development session. */
+  DEV_SLICING: z.enum(["on", "off"]).default("on"),
+  /** Fewer feature groups than this and the app is built in one session: the parts' overhead isn't worth it. */
+  DEV_MIN_SLICES: z.coerce.number().int().min(2).default(3),
+  /** Restarts a run may survive by resuming from its finished steps before it is failed. */
+  MAX_RESUMES: z.coerce.number().int().min(0).default(2),
   MAX_REVISIONS: z.coerce.number().int().min(0).default(5),
   /** Budget for one feedback round on a deployed app; counts against the daily spend cap. */
   REVISION_BUDGET_USD: z.coerce.number().positive().default(5),

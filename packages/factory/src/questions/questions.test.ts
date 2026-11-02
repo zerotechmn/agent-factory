@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { PrdReview } from "../agents/prd-review/prd-review.schema";
 import type { Prd } from "../agents/requirements/requirements.schema";
 import { answerSchema, createRunSchema } from "../runs/runs.dto";
+import { markWatched } from "../runs/runs.presence";
 import * as RunsStore from "../runs/runs.store";
 import { answerCheckpoint, askCustomer } from "./questions.service";
 import * as QuestionsStore from "./questions.store";
@@ -130,5 +131,66 @@ describe("API input", () => {
     expect(answerSchema.safeParse({ answers: [{ id: "Q-1", value: " " }], checkpoint: "research" }).success).toBe(false);
     expect(answerSchema.safeParse({ checkpoint: "deploy" }).success).toBe(false);
     expect(answerSchema.parse({ checkpoint: "prd" })).toEqual({ answers: [], checkpoint: "prd" });
+  });
+});
+
+describe("askCustomer when a run resumes after a restart", () => {
+  test("an answered checkpoint returns the saved answers without asking again", async () => {
+    const runId = newRun();
+    const first = askCustomer(runId, { checkpoint: "research", items: [question("Q-1")], pollMs: 5, timeoutMs: 60_000 });
+    await Bun.sleep(15);
+    answerCheckpoint(runId, "research", { answers: [{ id: "Q-1", value: "Anyone" }], feedback: null });
+    await first;
+
+    const replay = await askCustomer(runId, { checkpoint: "research", items: [question("Q-1")], pollMs: 5, resume: true, timeoutMs: 60_000 });
+    expect(replay.answers).toEqual([{ answeredBy: "customer", id: "Q-1", value: "Anyone" }]);
+    expect(replay.closedBy).toBe("customer");
+  });
+
+  test("an open checkpoint keeps the deadline the customer was shown", async () => {
+    const runId = newRun();
+    const deadline = new Date(Date.now() + 40).toISOString();
+    QuestionsStore.openCheckpoint(runId, { checkpoint: "prd", context: null, deadline, items: [question("OQ-1")], openedAt: new Date().toISOString() });
+
+    const started = Date.now();
+    const result = await askCustomer(runId, { checkpoint: "prd", items: [question("OQ-1")], pollMs: 5, resume: true, timeoutMs: 60_000 });
+    expect(result.closedBy).toBe("timeout");
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(QuestionsStore.getCheckpoint(runId, "prd")?.deadline).toBe(deadline);
+  });
+});
+
+describe("waiting only while someone watches", () => {
+  const watch = { leaveMs: 60, startMs: 50 };
+
+  test("nobody has the build open: no wait at all, the agents' choices are used", async () => {
+    const runId = newRun();
+    const started = Date.now();
+    const result = await askCustomer(runId, { checkpoint: "research", items: [question("Q-1")], onlyWhileWatched: watch, pollMs: 5, timeoutMs: 60_000 });
+    expect(Date.now() - started).toBeLessThan(100);
+    expect(result).toMatchObject({ answers: [{ answeredBy: "default", id: "Q-1" }], closedBy: "timeout" });
+    expect(RunsStore.getRun(runId)?.status).toBe("running");
+  });
+
+  test("someone watching gets asked; when they leave, the run stops waiting", async () => {
+    const runId = newRun();
+    markWatched(runId);
+    const pending = askCustomer(runId, { checkpoint: "research", items: [question("Q-1")], onlyWhileWatched: watch, pollMs: 5, timeoutMs: 60_000 });
+    await Bun.sleep(20);
+    expect(RunsStore.getRun(runId)?.status).toBe("waiting_customer");
+    // No more polls from the page: after leaveMs the wait ends with the defaults.
+    const result = await pending;
+    expect(result.closedBy).toBe("timeout");
+  });
+
+  test("a watcher who keeps the page open can still answer", async () => {
+    const runId = newRun();
+    markWatched(runId);
+    const keepWatching = setInterval(() => markWatched(runId), 10);
+    const pending = askCustomer(runId, { checkpoint: "research", items: [question("Q-1")], onlyWhileWatched: watch, pollMs: 5, timeoutMs: 60_000 });
+    await Bun.sleep(100);
+    answerCheckpoint(runId, "research", { answers: [{ id: "Q-1", value: "Anyone" }] });
+    expect((await pending).closedBy).toBe("customer");
+    clearInterval(keepWatching);
   });
 });

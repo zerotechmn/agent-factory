@@ -10,8 +10,10 @@ export const runsRoutes = new Elysia({ prefix: "/api/runs" })
       ip: clientIp(request, server?.requestIP(request)?.address),
     }),
   )
-  .get("/:id", ({ params }) => RunsController.getRun(params.id))
+  .get("/:id", ({ params, query }) => RunsController.getRun(params.id, { watching: query.watch === "1" }))
   .get("/:id/board", ({ params }) => RunsController.getBoard(params.id))
+  .post("/:id/cancel", ({ params }) => RunsController.cancelRun(params.id))
+  .delete("/:id", ({ params }) => RunsController.deleteRun(params.id))
   .post("/:id/answers", ({ body, params }) => RunsController.answerQuestions(params.id, body))
   .post("/:id/feedback", ({ body, params, request, server }) =>
     RunsController.submitFeedback({ body, id: params.id, ip: clientIp(request, server?.requestIP(request)?.address) }),

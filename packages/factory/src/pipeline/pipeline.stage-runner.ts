@@ -25,6 +25,8 @@ export type StageResult<Handoff> = {
 
 export type RunStageInput<Schema extends z.ZodObject> = {
   allowanceUsd: number;
+  /** Aborts the session when the run is cancelled. */
+  cancelSignal?: AbortSignal;
   allowedTools: string[];
   cwd: string;
   /** SDK hooks, e.g. the librarian attaching lessons to a failing command's output. */
@@ -71,6 +73,9 @@ export async function runStage<Schema extends z.ZodObject>(
   const startedAt = Date.now();
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), input.settings.timeoutMs);
+  const onCancel = () => abortController.abort();
+  input.cancelSignal?.addEventListener("abort", onCancel, { once: true });
+  if (input.cancelSignal?.aborted) abortController.abort();
   const usage = new UsageTracker(input.model);
 
   const baseMeta = {
@@ -142,7 +147,9 @@ export async function runStage<Schema extends z.ZodObject>(
         if (message.type === "result") result = message;
       }
     } catch (error) {
-      thrown = abortController.signal.aborted
+      thrown = input.cancelSignal?.aborted
+        ? "Cancelled by the user"
+        : abortController.signal.aborted
         ? `Stage timed out after ${Math.round(input.settings.timeoutMs / 60_000)} min`
         : error instanceof Error
           ? error.message
@@ -165,6 +172,7 @@ export async function runStage<Schema extends z.ZodObject>(
     }
   } finally {
     clearTimeout(timeout);
+    input.cancelSignal?.removeEventListener("abort", onCancel);
   }
   const { accepted, result, thrown } = attempt;
 

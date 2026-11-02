@@ -80,3 +80,8 @@ function map(row: Raw): CheckpointState {
     openedAt: row.opened_at,
   };
 }
+
+/** Part of deleting a run; the caller wraps every store's deleteRun in one transaction. */
+export function deleteRun(runId: string): void {
+  db.query("DELETE FROM customer_checkpoints WHERE run_id = ?").run(runId);
+}

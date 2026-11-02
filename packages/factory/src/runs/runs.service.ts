@@ -1,13 +1,21 @@
+import { rm } from "node:fs/promises";
+
 import * as BoardService from "../board/board.service";
+import * as BoardStore from "../board/board.store";
 import { config } from "../lib/config";
+import { db } from "../lib/db";
 import { ConflictError, NotFoundError, TooManyRequestsError, ValidationError } from "../lib/errors";
-import { recentActivity } from "../pipeline/pipeline.activity";
+import { callDeployer } from "../lib/deployer";
+import * as LibrarianStore from "../librarian/librarian.store";
+import { clearActivity, recentActivity } from "../pipeline/pipeline.activity";
+import * as PipelineCancel from "../pipeline/pipeline.cancel";
 import { readStageReport, runPaths } from "../pipeline/pipeline.artifacts";
 import { executeRun } from "../pipeline/pipeline.service";
 import * as QuestionsService from "../questions/questions.service";
 import * as QuestionsStore from "../questions/questions.store";
 import * as RevisionsStore from "../revisions/revisions.store";
 import { answerSchema, createRunSchema, feedbackSchema, runIdSchema } from "./runs.dto";
+import { markWatched } from "./runs.presence";
 import * as RunsStore from "./runs.store";
 
 export async function createRun({ benchmarkToken, body, ip }: { benchmarkToken?: string | null; body: unknown; ip: string }) {
@@ -54,8 +62,10 @@ export function submitFeedback({ body, id, ip }: { body: unknown; id: string; ip
   return { revision: n };
 }
 
-export function getRunDetail(id: string) {
+export function getRunDetail(id: string, { watching = false }: { watching?: boolean } = {}) {
   const run = findRun(id);
+  // Only the build's own pages say they're watching; the front page's recent-builds list doesn't.
+  if (watching) markWatched(run.id);
   const queuePosition = run.status === "queued" ? RunsStore.queuePosition(run.id) : null;
   return {
     activity: recentActivity(run.id),
@@ -104,15 +114,72 @@ export async function getStageReport(id: string, dirName: string) {
   return { dirName, markdown };
 }
 
+/**
+ * Stops a build. A queued one never starts; a running or waiting one has its
+ * agent session aborted and ends as "cancelled". A queued feedback round is
+ * dropped and the app stays as it is.
+ */
+export function cancelRun(id: string) {
+  const run = findRun(id);
+  if (run.status === "queued") {
+    const revision = RevisionsStore.pendingRevision(run.id);
+    if (revision) {
+      RevisionsStore.updateRevision(run.id, revision.n, { note: "Cancelled by the user", status: "failed" });
+      RunsStore.updateRun(run.id, { status: "deployed", stopReason: `Feedback round ${revision.n} cancelled; the app is unchanged.` });
+    } else {
+      RunsStore.updateRun(run.id, { status: "cancelled", stopReason: "Cancelled by the user before it started" });
+    }
+    return { cancelled: true };
+  }
+  if (run.status !== "running" && run.status !== "waiting_customer") throw new ConflictError("This build has already finished.");
+  // The pipeline ends itself as "cancelled" once its current step stops.
+  if (!PipelineCancel.cancelRun(run.id)) {
+    RunsStore.updateRun(run.id, { status: "cancelled", stopReason: "Cancelled by the user" });
+  }
+  return { cancelled: true };
+}
+
+/**
+ * Deletes a finished build completely: its containers, images and data
+ * volume (via the deployer), its run folder, and its rows in every table, in
+ * one transaction in this process (the only one that writes the database).
+ */
+export async function deleteRun(id: string) {
+  const run = findRun(id);
+  if (!DELETABLE.has(run.status) || RevisionsStore.pendingRevision(run.id)) {
+    throw new ConflictError("Only a finished build can be deleted; cancel it first.");
+  }
+  const destroyed = await callDeployer("/destroy", { runId: run.id });
+  if (!destroyed.ok) throw new Error(`The deployer could not remove the app: ${destroyed.body.slice(0, 200)}`);
+  await rm(runPaths(config.DATA_DIR, run.id).root, { force: true, recursive: true });
+  deleteRunRecords(run.id);
+  clearActivity(run.id);
+  console.info("[runs] deleted run", { id: run.id });
+  return { deleted: true };
+}
+
+/** Every table's rows for one run, in one transaction: all or nothing. */
+export function deleteRunRecords(runId: string): void {
+  db.transaction(() => {
+    BoardStore.deleteRun(runId);
+    QuestionsStore.deleteRun(runId);
+    RevisionsStore.deleteRun(runId);
+    LibrarianStore.deleteRunQueries(runId);
+    RunsStore.deleteRun(runId);
+  })();
+}
+
+const DELETABLE = new Set(["deployed", "deployed_partial", "failed", "failed_budget", "cancelled"]);
+
 export function startWorker() {
   // A revision cut off by a restart leaves the previous version live: put its run back to deployed.
   const revising = RevisionsStore.runningRevisionRuns();
-  const interrupted = RunsStore.failInterruptedRuns();
+  const interrupted = RunsStore.requeueInterruptedRuns({ exclude: revising, maxResumes: config.MAX_RESUMES });
   RevisionsStore.failInterruptedRevisions();
   for (const runId of revising) {
     RunsStore.updateRun(runId, { status: "deployed", stopReason: "A feedback round was interrupted by a factory restart; the previous version is still live." });
   }
-  if (interrupted > 0) console.info("[runs] marked interrupted runs as failed", { interrupted });
+  if (interrupted.requeued.length || interrupted.failed.length) console.info("[runs] interrupted runs after restart", interrupted);
   // Polling backs up the kick in createRun, e.g. after a restart with queued runs.
   setInterval(() => void drainQueue(), 5_000);
   void drainQueue();

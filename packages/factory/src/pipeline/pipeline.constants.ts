@@ -145,6 +145,13 @@ export const FIX_SKILLS = [...STAGE_SETTINGS.development.skills, "factory:system
  */
 export const DEPLOY_RESERVE_USD = 1.0;
 
+/**
+ * Held back from the build stages for the first fix round. Earlier runs spent
+ * their whole budget on the first build and stopped before Fix 1, so the
+ * failures verify found were shipped instead of fixed.
+ */
+export const FIX_RESERVE_USD = FIX_BUDGET_USD;
+
 /** Verify → repair/fix rounds after the first verify. */
 export const MAX_FIX_ATTEMPTS = 2;
 

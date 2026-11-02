@@ -43,7 +43,7 @@ research ─► requirements ─► PRD gates ─► ┌ test cases   ┐ ─►
 | Test cases | agent | Sonnet 5.5 | stage folder | Given/When/Then cases mapped to criteria, smoke checks |
 | Architecture | agent | Opus 5.5 | stage folder | stack, file tree, data model, the API contract (request, response and errors per endpoint, auth per role, screen routes), commands, stylesheet location, Dockerfile plan |
 | UI/UX design | agent | Opus 5.5 | stage folder | ZT: a template, components, actions and states per screen (`screens.json` contract). Custom: visual direction, design tokens, components, wireframes. See *Design systems* |
-| Development | agent | Opus 5.5 | `workspace/` | the app, its tests (written test-first) and a Dockerfile |
+| Development | agent | Opus 5.5 | `workspace/` | the app, its tests (written test-first) and a Dockerfile. Larger apps are built in parts: a scaffold, one session per feature group, and a finish (see *Development in parts*) |
 | Acceptance tests | agent, in parallel with development | Sonnet 5.5 | stage folder | black-box tests of the test plan, from the architecture's API contract only. See *Acceptance tests* |
 | Verify | **code** | – | `workspace/` + deployer + headless Chromium | install + test suite, image build, container start, `/health`, GET smoke checks, browser checks of every screen, and the independent acceptance tests against a throwaway copy of the app. Costs $0; a green verify *is* the deployment |
 | Review | agent | Sonnet 5.5 | `workspace/` (read-only) | findings by severity, criterion coverage; re-reviews read only the diff |
@@ -148,9 +148,10 @@ Agents never wait for a person mid-session: an idle session's prompt cache expir
 
 - **Skipped when empty:** a checkpoint without questions doesn't pause.
 - **Answering:** the suggestion is preselected, so "Use the suggestions" or "Approve as is" is one click. "Other" and a free-text box take anything else. Answering continues the run at once.
-- **No answer:** after `CUSTOMER_TIMEOUT_MINUTES` (default 15) the run continues with the agents' choices. If the first checkpoint timed out, the second doesn't wait, since the customer isn't watching.
+- **Only while someone is watching** (`CUSTOMER_WAIT_ONLY_IF_WATCHING=on`, the default): the build's status and task-board pages tell the factory they're open (they poll the run every 2 seconds with `?watch=1`; the front page's recent-builds list doesn't count). If nobody has the build open when questions come up, the run continues at once with the agents' choices. If you leave the page during a wait, it continues within a minute. A background tab counts as away, because browsers pause its polling.
+- **No answer:** after `CUSTOMER_TIMEOUT_MINUTES` (default 5) the run continues with the agents' choices. With the watching rule off, a timed-out first checkpoint also skips the second.
 - **Cost:** waiting costs no tokens. Resuming the requirements session after more than 5 minutes rewrites its small cache (about $0.05–0.10).
-- **Queue:** a waiting run keeps its run slot, so with `MAX_CONCURRENT_RUNS=1` the next run can wait up to about 30 minutes behind it.
+- **Queue:** a waiting run keeps its run slot, so with `MAX_CONCURRENT_RUNS=1` the next run can wait behind it, at most about 10 minutes, and only while someone is answering.
 - **Opting out:** `CUSTOMER_QUESTIONS=off` turns the checkpoints off. Runs created with `interactive: false` never pause; the benchmark sends this.
 - **Record:** `SUMMARY.md` lists every question, its answer, and whether the customer or the agent decided.
 
@@ -159,7 +160,7 @@ Agents never wait for a person mid-session: an idle session's prompt cache expir
 A deployed app's status page has **Feedback on your app**. Sending it starts a feedback round, a revision of the same app at the same address, built from the run's stored data rather than from scratch.
 
 1. **Spec:** a fresh requirements session updates the stored PRD from the feedback. It keeps unchanged items and IDs identical, so the factory can compute exactly what changed (`prdDiff`).
-2. **PRD gates and confirmation:** the PRD gates run, and the customer sees "What will change" and confirms or adjusts it. The 15-minute auto-continue applies.
+2. **PRD gates and confirmation:** the PRD gates run, and the customer sees "What will change" and confirms or adjusts it. The usual auto-continue applies.
 3. **Downstream updates:** test cases, architecture, UI design and the acceptance suite each get their previous output plus the change list and return an updated version.
 4. **Code:** the developer runs a change round (`REVISION_DEV_BUDGET_USD`, $2.50) in a **fresh session**, primed with the updated spec and contract and its own earlier handoff. Old agent sessions aren't reused: they live in the container and are lost on rebuilds, and resuming one hours later would rewrite its whole cache.
 5. **Checks and review:** verify, fix rounds and review run as usual; review reads only the round's diff.
@@ -181,6 +182,27 @@ Agents use proven engineering skills, vendored in `packages/factory/skills-plugi
 
 The web interface guidelines are the UI baseline (104 checkable rules on accessibility, focus, forms, motion, copy and more): the developer builds to them, the reviewer checks against them, and the UI/UX spec doesn't restate them, which keeps it short. The upstream skills ask a human at a few decision points. The vendored copies are edited so an unattended agent decides and records the decision in its report instead. `skills-plugin/NOTICE.md` lists every change and the pinned commits.
 
+### Development in parts
+
+One long development session re-reads its whole context on every turn: the spec, then all the code and tool output so far. Past sessions re-read 0.9–7.1 M cached tokens, and the last feature was built inside a context full of the first ones. So a larger app is built in parts, each a fresh session:
+
+| Part | Stage label | Sees | Builds |
+|---|---|---|---|
+| Scaffold | `Development (scaffold)` | the architecture, the PRD's entities, roles and screen list, the UI design minus per-screen detail, the library index and stack lessons | the project and Dockerfile, the data layer for **every** entity, the server, auth, the app shell and menu, a placeholder route per screen, the test setup, an empty seed. Its `notes` are the conventions every feature session follows |
+| Feature group | `Development (F-02+F-03)` | **only its slice**: its features, rules, screens, test cases, contract endpoints, entities and UI screens, plus the earlier parts' notes | its tests first, then its API and screens; seed records; the **full** suite and `browser_check` on its screens. `spec_get` / `spec_trace` reach anything outside the slice |
+| Finish | `Development (finish)` | what each part built, every PRD screen, the commands | seed data for every screen, the full suite, `browser_check` on every screen, the README; the final commands and screen map |
+
+- **How features are grouped** (`development.slices.ts`): features that share a screen go together, since they edit the same files. Order is Must → Should → Could, with at most 6 groups (the smallest merge into a neighbour). With fewer than `DEV_MIN_SLICES` groups (default 3), the app is built in one session as before; small apps don't pay for the overhead.
+- **Prompt size:** on four past specs, a feature session starts with 9–25 k characters of prompt instead of 72–86 k.
+- **Budget:** the development pool ($7) gives $1.50 to the scaffold, $1.00 to the finish, and $0.80–2.00 to each group, with a $0.40 minimum per part.
+- **When a part fails or the money runs out:** if a group runs out of money, the later groups are skipped. The finish still runs, the missing features are listed in `knownGaps` and the stop reason, and the run ships as `deployed_partial`, never as fully deployed.
+- **Downstream reads one merged handoff:** latest commands, latest path per screen, and all tests, files and gaps. Verify, review, the acceptance tests and fix rounds are unchanged.
+- **Fix rounds** resume the finish session.
+- **The board:** each feature part moves only its own features, screens and tests.
+- **Restarts:** a restart reruns only the interrupted part.
+- **Feedback rounds** stay single-session.
+- **Unproven so far.** More sessions also mean more cache writes and more re-reading of existing code. `DEV_SLICING=off` restores the single session; compare the two with the benchmark before relying on it.
+
 ## Task board
 
 Each run has a kanban board at `/runs/<id>/board`. The status page shows a summary bar that links to it. Cards come from the plan: PRD features (F-xx) and screens (S-xx), and the test plan's cases (TC-x) and smoke checks. Each card sits in one of five columns: **To do**, **In progress**, **Built**, **Verified** and **Failed**. Every move is recorded, with who made it and when, in the card's history and the activity feed.
@@ -192,7 +214,7 @@ Who moves cards:
 | Developer's stream | Test cases → In progress | A test case id appears in code the developer writes, through Write/Edit or a shell heredoc (tests are named `TC-3: …`) |
 | Developer's stream | Test cases → Built / back to In progress | The developer's own test runs: per-test result lines, or a fully green total (`# pass 59 / # fail 0`), which proves every test written so far passes |
 | Developer's stream | Features → In progress / Built | Follow their linked test cases |
-| Development handoff | Test cases → Built (`testsWritten`); screens → Built (their URL); features → Built, unless listed in `knownGaps` | When the stage finishes |
+| Development handoff | Test cases → Built (`testsWritten`); screens → Built (their URL); features → Built, unless listed in `knownGaps`. Built in parts, each feature part moves only its own features, screens and tests; scaffold and finish move no feature | When the stage (or part) finishes |
 | Verify gate | Test cases → Verified / Failed | From each test's result line in `tests.log` (TAP, spec reporters, bun, pytest -v), or from the whole suite passing |
 | Verify gate | Smoke checks and screens → Verified / Failed | From HTTP and browser check results |
 | Verify gate | Features → Verified / Failed | From their linked test cases |
@@ -259,17 +281,32 @@ bun packages/factory/scripts/benchmark.ts run baseline-v1          # real spend:
 bun packages/factory/scripts/benchmark.ts report next baseline-v1  # compare two benchmarks
 ```
 
-`run` submits the prompts through the API and waits for them. The token skips the per-IP run limit, but not the daily spend cap. `report` reads the database and run folders without changing them, and writes `data/benchmarks/<label>.md`:
+`run` submits the prompts through the API and waits for them. The token skips the per-IP run limit, but not the daily spend cap. `report` reads the run folders and the database without changing them (while a factory is running it reads the safe snapshot `data/backups/latest.sqlite`, up to 10 minutes old, never the live file; see *Database safety*), and writes `data/benchmarks/<label>.md`:
 - deployed count and acceptance pass rate (independent)
 - verify passed first time, and fix rounds
 - mean and total cost, run time, and development time
 - per run: acceptance coverage, blocker and major review findings, librarian calls
+
+## Cancel, delete and recent builds
+
+- **Cancel** (status page, or `POST /api/runs/:id/cancel`):
+  - **Queued:** the build never starts.
+  - **Running:** the agent session in progress is aborted at once. The pipeline also checks between stages and while waiting for your answers, and the build ends as `cancelled` with nothing more spent. A verify step in progress finishes its current check first.
+  - **Feedback round:** cancelling one keeps the previous version live (rolled back if verify had already replaced it).
+- **Delete** (status page, or `DELETE /api/runs/:id`), for finished or cancelled builds only:
+  - the deployer's `/destroy` removes the app's containers, images and data volume
+  - the factory deletes the run folder and the run's rows in every table, in one transaction in its own process
+  - lessons stay
+- **Who can do this:** anyone with the build's link, the same rule as viewing it. Run IDs are 10 random characters.
+- **Recent builds:** the front page lists the builds started from this browser (kept in this browser only, since the portal has no login), and opens any build from a pasted ID or link.
+- **Never edit `data/factory.sqlite` from the Mac while the factory runs.** SQLite's locking doesn't work across Docker Desktop's file sharing, and two writers corrupt the file; this happened once. Use these features, or stop the factory first.
 
 ## Budget and early stop
 
 - `RUN_BUDGET_USD` (default **$15**) is a hard cap per prompt. A straight pass is allocated about $10.20, which leaves room for repair and fix rounds.
 - Before each agent starts, the factory gives it `min(stage budget, available − reserve)` and holds that amount until the agent finishes, so parallel stages can never claim the same money. The Agent SDK enforces the allowance with `maxBudgetUsd`, so a stage stops partway through if it reaches its limit.
 - **$1 is reserved for deployment repair.** If the budget runs out after the app exists, the factory skips the remaining review and fix work, redeploys the latest code and still ships it (`deployed_partial`). If the budget runs out before that, the run ends as `failed_budget`.
+- **$1.50 is reserved for the first fix round.** Spec, design, the first build and the first review can't spend it, so a run that spends heavily on its first build still fixes what verify finds instead of shipping it. Earlier runs stopped "before Fix 1" for exactly this reason. Fix rounds, test triage and re-reviews may use it; only deployment repair may use the deploy reserve. A feedback round holds a fifth of its smaller budget instead.
 - Spend comes from the SDK's `total_cost_usd`, which is an estimate and not a bill. It is logged for every agent call in `ledger.jsonl`, and verify entries show $0. The SDK checks the limit between turns, so a stage can go slightly over by up to one model turn.
 - There are also global limits: `DAILY_SPEND_CAP_USD` (which counts in-flight runs at full budget), `RUNS_PER_IP_PER_DAY` and `MAX_CONCURRENT_RUNS`.
 
@@ -320,4 +357,18 @@ cd packages/portal && bun run dev                         # portal on :5173, pro
 
 - List deployed apps: `docker ps --filter label=factory.app=true`
 - Remove an app: `docker rm -f factory-app-<runId> && docker volume rm factory-app-<runId>-data`
-- If the factory restarts during a run, that run is marked failed. Queued runs resume automatically.
+- **Restarts don't lose runs.** A run in progress when the factory stops (a rebuild, a crash, `docker compose restart`) goes back to the front of the queue and resumes:
+  - every agent step that had finished is replayed from its stage folder (`handoff.json`, `meta.json`) instead of being run and paid for again
+  - the step that was cut off runs again from its start, after its half-written files are dropped (`git reset --hard` + `git clean` in the workspace; ignored files such as `node_modules` stay)
+  - verify always runs for real (it is free, and it restarts the container)
+  - customer questions already answered are not asked again, and an open checkpoint keeps the deadline the customer was shown
+  - spend already made counts against the budget as before
+
+  A run the factory keeps dying on is failed after `MAX_RESUMES` restarts (default 2) instead of looping. Feedback rounds are not resumed: the previous version stays live, as before. Queued runs start automatically after a restart.
+
+### Database safety
+
+The factory's SQLite database (`data/factory.sqlite`) runs in WAL mode, which only works when every process using it is on the same machine. A factory in Docker and anything on the Mac opening the same file (a second factory, a script, the `sqlite3` CLI) can corrupt it; one run ended with `database disk image is malformed`. So:
+- **One factory per data folder.** On start the factory claims `data/factory.lock` and refreshes it every 10 s. A second factory pointed at the same folder refuses to start and names the one holding it. A crashed factory's lock goes stale after 35 s.
+- **Read the snapshot, never the live file.** Every 10 minutes the factory writes `data/backups/latest.sqlite`, a complete standalone copy (`VACUUM INTO`, no WAL) that is safe to open from anywhere, and keeps one copy per hour for two days (`data/backups/factory-YYYYMMDDHH.sqlite`). For live queries use `docker compose exec factory sqlite3 /data/factory.sqlite`.
+- **Integrity check on start.** A damaged database is reported loudly in the log. To recover, stop the factory, move `factory.sqlite*` aside, copy a backup to `data/factory.sqlite` and start again.

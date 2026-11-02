@@ -5,11 +5,12 @@ import { join } from "node:path";
 
 import type { Acceptance } from "../agents/acceptance/acceptance.schema";
 import { agentFor } from "../agents/agents.registry";
+import { mergeDevHandoffs, planSlices, sliceBudgets, type DevHandoff } from "../agents/development/development.slices";
 import type { Prd } from "../agents/requirements/requirements.schema";
 import { asPrd, describePrdDiff, prdDiff } from "../agents/requirements/requirements.utils";
 import { coverageIssues, type PrdReview } from "../agents/prd-review/prd-review.schema";
 import { checkPrdQuality, validatePrd } from "../agents/requirements/requirements.validate";
-import { jsonBlock, systemPromptFor, type StageContext } from "../agents/agents.shared";
+import { jsonBlock, systemPromptFor, type DevPartContext, type DevPartSummary, type StageContext } from "../agents/agents.shared";
 import * as BoardService from "../board/board.service";
 import { config } from "../lib/config";
 import { callDeployer } from "../lib/deployer";
@@ -20,6 +21,7 @@ import { librarianHooks } from "../librarian/librarian.hooks";
 import { librarianMcpServer, librarianToolNames, librarianToolsets } from "../librarian/librarian.tools";
 import type { LessonInput } from "../librarian/librarian.types";
 import { askCustomer } from "../questions/questions.service";
+import { isWatched } from "../runs/runs.presence";
 import * as QuestionsStore from "../questions/questions.store";
 import type { Checkpoint, CheckpointResult, PrdCheckpointContext, Question } from "../questions/questions.types";
 import { prdContext, prdQuestions, renderPrdFeedback, renderResearchAnswers, researchQuestions } from "../questions/questions.utils";
@@ -30,19 +32,21 @@ import {
   commitWorkspace,
   headCommit,
   initRunDir,
+  resetWorkspace,
   runPaths,
   stagePaths,
   workspaceHasFile,
   writeJson,
   type RunPaths,
 } from "./pipeline.artifacts";
-import { commitAllowance, createBudget, decideAllowance, recordSpend, type Budget } from "./pipeline.budget";
+import { commitAllowance, createBudget, decideAllowance, recordSpend, type Budget, type ReserveAccess } from "./pipeline.budget";
 import {
   ACCEPTANCE_REPAIR_BUDGET_USD,
   APP_PORT,
   REVISION_DEV_BUDGET_USD,
   DEPLOY_RESERVE_USD,
   FIX_BUDGET_USD,
+  FIX_RESERVE_USD,
   FIX_SKILLS,
   MAX_FIX_ATTEMPTS,
   PRD_REPAIR_BUDGET_USD,
@@ -51,8 +55,10 @@ import {
   VERIFY_LABEL,
 } from "./pipeline.constants";
 import { runGate, type GateMode, type GateResult, type SmokeCheck } from "./pipeline.gate";
-import { checkAcceptanceFiles, installAcceptance, protectAcceptance } from "./pipeline.acceptance";
+import { ACCEPTANCE_DIR, checkAcceptanceFiles, installAcceptance, protectAcceptance } from "./pipeline.acceptance";
 import { activityObserver, clearActivity, recordActivity } from "./pipeline.activity";
+import { registerRun, RunCancelledError, throwIfCancelled, unregisterRun } from "./pipeline.cancel";
+import { Journal, loadJournal, type JournalEntry } from "./pipeline.journal";
 import { runStage, type StageOutcome } from "./pipeline.stage-runner";
 import { shouldCheckMobile, uiScreensFrom } from "./pipeline.ui-check";
 import type { AgentStageKey, DesignSystem, RunStatus } from "./pipeline.types";
@@ -63,6 +69,10 @@ type StepResult = { handoff: unknown; outcome: StepOutcome; sessionId: string | 
 type StepOptions = {
   budgetUsd?: number;
   customerInput?: string | null;
+  /** Which part of a development built in parts this step is. */
+  devPart?: DevPartContext;
+  /** Overrides the stage's minimum allowance, for parts smaller than a whole stage. */
+  minUsd?: number;
   fix?: StageContext["fix"];
   gate?: GateResult | null;
   repairIssues?: string[];
@@ -103,15 +113,24 @@ export async function executeRun({
 }): Promise<void> {
   const paths = runPaths(config.DATA_DIR, id);
   const pipeline = new Pipeline(id, prompt, paths, designSystem, interactive);
+  pipeline.cancelSignal = registerRun(id);
   try {
     if (revision) return await pipeline.revise(revision);
+    // A run that already has steps was interrupted by a restart and re-queued: carry on from where it stopped.
+    if (RunsStore.listStages(id).length > 0) return await pipeline.resume();
     await initRunDir(paths, prompt);
     await pipeline.run();
   } catch (error) {
+    if (error instanceof RunCancelledError) {
+      console.info("[pipeline] run cancelled", { id, revision: revision?.n ?? null });
+      return revision ? await pipeline.cancelRevision() : await pipeline.finish("cancelled", "Cancelled by the user");
+    }
     const message = error instanceof Error ? error.message : String(error);
     console.error("[pipeline] run crashed", { id, message, revision: revision?.n ?? null });
     if (revision) return pipeline.finishRevision({ deployed: false, note: `Factory error: ${message}` });
     await pipeline.finish("failed", `Factory error: ${message}`);
+  } finally {
+    unregisterRun(id);
   }
 }
 
@@ -123,6 +142,10 @@ class Pipeline {
   private readonly appUrl: string;
   /** Labels of stages in flight; more than one while parallel branches run. */
   private readonly running = new Set<string>();
+  /** Aborted when the run is cancelled from the portal. */
+  cancelSignal: AbortSignal | null = null;
+  /** A feedback round's verify replaced the live container, so cancelling must put the old one back. */
+  private liveReplaced = false;
   /** Set during a feedback round on a deployed app. */
   private revision: { changes: string[]; feedback: string; n: number } | null = null;
   /** Spend and budget of earlier rounds, so the run shows its total. */
@@ -148,6 +171,12 @@ class Pipeline {
   private deployedCommit: string | null = null;
   /** Lessons repair agents reported, kept until a later verify or review proves (or disproves) the fix. */
   private pendingLessons: PendingLesson[] = [];
+  /** Feature groups a development built in parts never got to; the run can't count as fully deployed. */
+  private unbuilt: string[] = [];
+  /** Finished steps of an interrupted run, answered from disk instead of run again. */
+  private journal: Journal | null = null;
+  /** Highest stage number already used, so new stage folders never collide with the old ones. */
+  private seqFloor = 0;
 
   constructor(
     private readonly id: string,
@@ -156,9 +185,121 @@ class Pipeline {
     private readonly designSystem: DesignSystem,
     private readonly interactive: boolean = true,
   ) {
-    this.budget = createBudget({ capUsd: config.RUN_BUDGET_USD, deployReserveUsd: DEPLOY_RESERVE_USD });
+    this.budget = createBudget({ capUsd: config.RUN_BUDGET_USD, deployReserveUsd: DEPLOY_RESERVE_USD, fixReserveUsd: FIX_RESERVE_USD });
     const port = config.PUBLIC_HTTP_PORT === 80 ? "" : `:${config.PUBLIC_HTTP_PORT}`;
     this.appUrl = `http://${id}.apps.${config.BASE_DOMAIN}${port}`;
+  }
+
+  /**
+   * Builds the app: in one session for a small app (or with DEV_SLICING=off),
+   * otherwise as a scaffold, one fresh session per feature group, and a
+   * finish. Each feature session sees only its slice of the spec, so its
+   * context stays small; every part commits, so the board, a restart and a
+   * budget stop all work per feature. The parts' handoffs are merged into the
+   * one development handoff verify, review and fix rounds read.
+   */
+  private async develop(): Promise<StepResult> {
+    const slices =
+      config.DEV_SLICING === "on"
+        ? planSlices({
+            architecture: this.handoffs.architecture,
+            minSlices: config.DEV_MIN_SLICES,
+            prd: this.handoffs.requirements,
+            testPlan: this.handoffs.testCases,
+            uiDesign: this.handoffs.uiDesign,
+          })
+        : null;
+    if (!slices) return this.step("development");
+
+    const budgets = sliceBudgets({ count: slices.length, poolUsd: STAGE_SETTINGS.development.budgetUsd });
+    console.info("[pipeline] building in parts", { runId: this.id, slices: slices.map((s) => s.id) });
+    recordActivity(this.id, "Development", `Building in ${slices.length + 2} parts: foundation, ${slices.map((s) => s.id).join(", ")}, finish`);
+
+    // A part is a fraction of the whole build, so the whole stage's $1 minimum would refuse most of them.
+    const scaffold = await this.step("development", { budgetUsd: budgets.scaffoldUsd, devPart: { kind: "scaffold" }, minUsd: PART_MIN_USD, suffix: "scaffold" });
+    if (scaffold.outcome !== "succeeded") return scaffold;
+    const parts: DevHandoff[] = [scaffold.handoff as DevHandoff];
+    const summaries: DevPartSummary[] = [partSummary("scaffold", [], scaffold.handoff as DevHandoff)];
+    const gaps: string[] = [];
+    let stopped = false;
+    let lastSession = scaffold.sessionId;
+
+    for (const slice of slices) {
+      const notBuilt = (why: string) => gaps.push(...slice.features.map((f) => `${f.id} ${f.name}: not built (${why})`));
+      if (stopped) {
+        notBuilt("development stopped before this feature group");
+        continue;
+      }
+      const result = await this.step("development", {
+        budgetUsd: budgets.featureUsd,
+        devPart: { kind: "feature", previous: [...summaries], slice },
+        minUsd: PART_MIN_USD,
+        suffix: slice.id,
+      });
+      if (result.outcome === "succeeded") {
+        parts.push(result.handoff as DevHandoff);
+        summaries.push(partSummary(slice.id, slice.featureIds, result.handoff as DevHandoff));
+        lastSession = result.sessionId ?? lastSession;
+        continue;
+      }
+      notBuilt(isBudgetStop(result.outcome) ? "its session ran out of budget" : "its session failed");
+      // Out of money: later groups would only fail the same way. A failed session may be a one-off, so carry on.
+      if (isBudgetStop(result.outcome)) stopped = true;
+    }
+
+    // The finish runs whatever happened above: it seeds, checks every screen and reports the final commands.
+    const finish = await this.step("development", {
+      budgetUsd: budgets.finishUsd,
+      devPart: { kind: "finish", previous: summaries },
+      minUsd: PART_MIN_USD,
+      suffix: "finish",
+    });
+    if (finish.outcome === "succeeded") parts.push(finish.handoff as DevHandoff);
+
+    this.unbuilt = gaps;
+    // Named next to whatever stopped the build, so the customer sees which features are missing, not only why.
+    if (gaps.length) this.stopReason = [this.stopReason, `Not built: ${gaps.join("; ")}`].filter(Boolean).join(". ");
+    const merged = mergeDevHandoffs(parts, { extraGaps: gaps });
+    this.handoffs.development = merged;
+    await this.updateBoard("development", "Development", merged);
+    return { handoff: merged, outcome: "succeeded", sessionId: finish.sessionId ?? lastSession };
+  }
+
+  /**
+   * Continues a run cut off by a restart. Uncommitted changes of the
+   * interrupted step are dropped (that step runs again from its start), and
+   * the orchestration runs once more with every finished agent step replayed
+   * from disk. Spend already made is counted again from the stage records, so
+   * the budget picks up where it was.
+   */
+  async resume(): Promise<void> {
+    const stages = RunsStore.listStages(this.id);
+    const entries = await loadJournal(this.paths, stages);
+    this.journal = new Journal(entries);
+    this.seqFloor = Math.max(0, ...stages.map((s) => s.seq));
+    await resetWorkspace(this.paths);
+    console.info("[pipeline] resuming after restart", { replayable: entries.length, runId: this.id, stages: stages.length });
+    recordActivity(this.id, "Factory", `Resumed after a restart; reusing ${entries.length} finished steps`);
+    RunsStore.updateRun(this.id, { stopReason: null });
+    await this.run();
+  }
+
+  /** The next stage number: after both this session's stages and any left from before a restart. */
+  private nextSeq(): number {
+    this.seq = Math.max(this.seq, this.seqFloor) + 1;
+    return this.seq;
+  }
+
+  /** A finished step from before the restart: its result, without running or paying for it again. */
+  private replay(stageKey: AgentStageKey, label: string, entry: JournalEntry): StepResult {
+    this.budget = recordSpend(this.budget, { costUsd: entry.costUsd });
+    RunsStore.updateRun(this.id, { costUsd: this.costOffset + this.budget.spentUsd });
+    if (entry.outcome === "succeeded") {
+      this.handoffs[stageKey] = entry.handoff;
+      if (LESSON_STAGES.has(stageKey)) this.collectLessons(label, entry.handoff);
+    }
+    if (entry.outcome === "stopped_budget") this.stopReason ??= `${label}: stopped at its budget (before the restart)`;
+    return { handoff: entry.outcome === "succeeded" ? entry.handoff : null, outcome: entry.outcome, sessionId: entry.sessionId };
   }
 
   async run(): Promise<void> {
@@ -187,7 +328,7 @@ class Pipeline {
 
     // The independent tester writes black-box tests from the same contract
     // while the developer builds, so it adds no waiting time.
-    const [dev] = await Promise.all([this.step("development"), this.writeAcceptanceTests()]);
+    const [dev] = await Promise.all([this.develop(), this.writeAcceptanceTests()]);
     this.devSessionId = dev.sessionId;
     if (!(await workspaceHasFile(this.paths, "Dockerfile"))) {
       return this.stop(dev, "Development produced no deployable app (no Dockerfile)");
@@ -204,7 +345,9 @@ class Pipeline {
     }
 
     RunsStore.updateRun(this.id, { appUrl: this.appUrl });
-    return this.finish(clean ? "deployed" : "deployed_partial", clean ? null : this.stopReason ?? "Shipped with unresolved issues");
+    // Checks can pass on an app missing whole feature groups (their tests were never written), so those count against "clean".
+    const complete = clean && this.unbuilt.length === 0;
+    return this.finish(complete ? "deployed" : "deployed_partial", complete ? null : this.stopReason ?? "Shipped with unresolved issues");
   }
 
   /**
@@ -262,18 +405,29 @@ class Pipeline {
 
   private canAsk(checkpoint: Checkpoint): boolean {
     if (config.CUSTOMER_QUESTIONS !== "on" || !this.interactive) return false;
-    // A customer who didn't answer the first time isn't watching; don't make the run wait twice.
+    // Watching is checked live at each checkpoint, so someone who opens the page later is still asked.
+    if (config.CUSTOMER_WAIT_ONLY_IF_WATCHING === "on") return true;
+    // Otherwise: a customer who didn't answer the first time isn't watching; don't make the run wait twice.
     return !(checkpoint === "prd" && this.customerAbsent);
   }
 
   private async ask(checkpoint: Checkpoint, items: Question[], context: PrdCheckpointContext | null = null): Promise<CheckpointResult> {
     const timeoutMs = config.CUSTOMER_TIMEOUT_MINUTES * 60_000;
     const until = new Date(Date.now() + timeoutMs).toISOString().slice(11, 16);
-    recordActivity(this.id, "Customer", `Waiting for your answers; continuing on its own at ${until} UTC`);
-    await this.writeRunJson("waiting_customer");
-    const result = await askCustomer(this.id, { checkpoint, context, items, timeoutMs });
+    // Watching means the build's page polled within the last 10 s; leaving it for a minute ends the wait.
+    const onlyWhileWatched = config.CUSTOMER_WAIT_ONLY_IF_WATCHING === "on" ? WATCH_WINDOWS : null;
+    const watched = !onlyWhileWatched || isWatched(this.id, WATCH_WINDOWS.startMs);
+    recordActivity(
+      this.id,
+      "Customer",
+      watched ? `Waiting for your answers; continuing on its own at ${until} UTC` : "Questions ready, but nobody has this build open; continuing with the agents' choices",
+    );
+    if (watched) await this.writeRunJson("waiting_customer");
+    const result = await askCustomer(this.id, { checkpoint, context, items, onlyWhileWatched, resume: this.journal !== null, timeoutMs });
     if (result.closedBy === "timeout") this.customerAbsent = true;
-    recordActivity(this.id, "Customer", result.closedBy === "customer" ? "Thanks — answers received" : "No answer; continuing with the agents' own choices");
+    if (watched) {
+      recordActivity(this.id, "Customer", result.closedBy === "customer" ? "Thanks — answers received" : "No answer; continuing with the agents' own choices");
+    }
     await this.writeRunJson("running");
     return result;
   }
@@ -371,9 +525,11 @@ class Pipeline {
   }
 
   private async verify(mode: GateMode, suffix?: string): Promise<GateResult> {
+    throwIfCancelled(this.id);
+    // Verify builds and starts the app in the live container; a cancelled feedback round must put the old one back.
+    if (this.revision) this.liveReplaced = true;
     // Sequence number is taken synchronously so a parallel stage can't reuse it.
-    this.seq += 1;
-    const seq = this.seq;
+    const seq = this.nextSeq();
     const sp = stagePaths(this.paths, seq, "verify", suffix);
     const label = suffix ? `${VERIFY_LABEL} (${suffix})` : VERIFY_LABEL;
     RunsStore.startStage(this.id, { dirName: sp.dirName, label, seq, stageKey: "verify" });
@@ -458,11 +614,17 @@ class Pipeline {
 
   private async installAcceptanceSuite(): Promise<void> {
     if (!this.acceptanceSuite?.files.length) return;
+    // A resumed run already has the suite committed, possibly with test triage's fixes: keep it, don't reinstall.
+    if (this.journal && (await workspaceHasFile(this.paths, `${ACCEPTANCE_DIR}/harness.mjs`))) {
+      this.acceptanceCommit = await headCommit(this.paths);
+      return;
+    }
     recordActivity(this.id, VERIFY_LABEL, `Adding ${this.acceptanceSuite.files.length} acceptance test files to the workspace`);
     this.acceptanceCommit = await installAcceptance(this.paths, this.acceptanceSuite);
   }
 
   private async step(stageKey: AgentStageKey, options: StepOptions = {}): Promise<StepResult> {
+    throwIfCancelled(this.id);
     const settings = STAGE_SETTINGS[stageKey];
     const label = options.fix
       ? `Fix ${options.fix.attempt}`
@@ -470,12 +632,15 @@ class Pipeline {
         ? `${settings.label} (${options.suffix})`
         : settings.label;
 
+    const replayed = this.journal?.take(stageKey, label);
+    if (replayed) return this.replay(stageKey, label, replayed);
+
     // Everything up to the first await runs synchronously, so two steps
     // started with Promise.all can't both claim the same money or sequence number.
     const decision = decideAllowance({
+      access: reserveAccess(stageKey, options),
       budget: this.budget,
-      canUseReserve: stageKey === "deployment",
-      minUsd: settings.minUsd,
+      minUsd: options.minUsd ?? settings.minUsd,
       requestedUsd: options.budgetUsd ?? settings.budgetUsd,
     });
     if (decision.kind === "stop") {
@@ -484,8 +649,7 @@ class Pipeline {
       return { handoff: null, outcome: "not_started", sessionId: null };
     }
     this.budget = commitAllowance(this.budget, decision.allowanceUsd);
-    this.seq += 1;
-    const seq = this.seq;
+    const seq = this.nextSeq();
     const sp = stagePaths(this.paths, seq, stageKey, options.suffix);
     RunsStore.startStage(this.id, { dirName: sp.dirName, label, seq, stageKey });
     this.markRunning(label, true);
@@ -505,6 +669,7 @@ class Pipeline {
       librarianToolsets: toolsets,
       libraryIndex: this.libraryIndexFor(stageKey, options, label),
       customerInput: options.customerInput ?? null,
+      devPart: options.devPart ?? null,
       repairIssues: options.repairIssues ?? null,
       revision: this.revision,
       rereview: options.rereview ?? null,
@@ -533,6 +698,7 @@ class Pipeline {
 
     const result = await runStage({
       allowanceUsd: decision.allowanceUsd,
+      cancelSignal: this.cancelSignal ?? undefined,
       allowedTools: [...agent.allowedTools, ...librarianToolNames(stageKey)],
       cwd: agent.cwd(ctx),
       freshPrompt: promptFor(false),
@@ -565,7 +731,7 @@ class Pipeline {
 
     if (result.outcome === "succeeded") {
       this.handoffs[stageKey] = result.handoff;
-      await this.updateBoard(stageKey, label, result.handoff);
+      await this.updateBoard(stageKey, label, result.handoff, options.devPart);
       if (LESSON_STAGES.has(stageKey)) this.collectLessons(label, result.handoff);
     }
     if (result.outcome === "stopped_budget") this.stopReason ??= `${label}: ${result.error}`;
@@ -577,6 +743,8 @@ class Pipeline {
       spentUsd: this.budget.spentUsd.toFixed(4),
       stage: sp.dirName,
     });
+    // The stage is recorded (with what it cost) before a cancellation ends the run.
+    throwIfCancelled(this.id);
     return { handoff: result.handoff, outcome: result.outcome, sessionId: result.sessionId };
   }
 
@@ -646,6 +814,8 @@ class Pipeline {
         if (stageKey === "architecture") {
           return { lessons: LibrarianService.rankedLessons({ designSystem: this.designSystem, limit: 3, steps: ["build", "run", "health"], tags: [] }), query: "container traps" };
         }
+        // Building in parts: the scaffold sets up the stack, so it gets the stack's traps; later parts don't need them again.
+        if (stageKey === "development" && options.devPart && options.devPart.kind !== "scaffold") return { lessons: [], query: "" };
         if (stageKey === "development" && !options.fix) {
           const tags = LibrarianService.stackTags(this.handoffs.architecture);
           return { lessons: LibrarianService.rankedLessons({ designSystem: this.designSystem, tags }), query: `stack: ${tags.join(", ")}` };
@@ -669,7 +839,7 @@ class Pipeline {
   /** The architect chooses libraries and the first build writes common modules: both see what the librarian holds. */
   private libraryIndexFor(stageKey: AgentStageKey, options: StepOptions, label: string): StageContext["libraryIndex"] {
     if (config.LIBRARIAN === "off") return null;
-    if (stageKey !== "architecture" && !(stageKey === "development" && !options.fix)) return null;
+    if (stageKey !== "architecture" && !(stageKey === "development" && !options.fix && (!options.devPart || options.devPart.kind === "scaffold"))) return null;
     try {
       const catalog = LibrarianStore.listCatalog(10);
       this.logPush(label, "auto:catalog", "catalog list", catalog.map((c) => `catalog:${c.name}`));
@@ -685,12 +855,16 @@ class Pipeline {
   }
 
   /** Moves board cards from a finished stage's handoff. */
-  private async updateBoard(stageKey: AgentStageKey, label: string, handoff: unknown): Promise<void> {
+  private async updateBoard(stageKey: AgentStageKey, label: string, handoff: unknown, devPart?: DevPartContext): Promise<void> {
     await BoardService.safely(stageKey, () => {
       const stamp = { actor: label };
       if (stageKey === "requirements") BoardService.onRequirements(this.id, handoff, stamp);
       if (stageKey === "testCases") BoardService.onTestPlan(this.id, handoff, this.handoffs.requirements, stamp);
-      if (stageKey === "development") BoardService.onDevelopmentDone(this.id, handoff, stamp);
+      if (stageKey === "development") {
+        // A feature group's session speaks only for its own features; scaffold and finish for none.
+        const scope = !devPart ? undefined : devPart.kind === "feature" ? devPart.slice.featureIds : "none";
+        BoardService.onDevelopmentDone(this.id, handoff, stamp, scope);
+      }
     });
   }
 
@@ -765,7 +939,12 @@ class Pipeline {
     const run = RunsStore.getRun(this.id);
     this.costOffset = run?.costUsd ?? 0;
     this.budgetOffset = run?.budgetUsd ?? 0;
-    this.budget = createBudget({ capUsd: config.REVISION_BUDGET_USD, deployReserveUsd: DEPLOY_RESERVE_USD });
+    // A feedback round is small; a full fix reserve would starve its build, so it holds a fifth of the budget.
+    this.budget = createBudget({
+      capUsd: config.REVISION_BUDGET_USD,
+      deployReserveUsd: DEPLOY_RESERVE_USD,
+      fixReserveUsd: Math.min(FIX_RESERVE_USD, config.REVISION_BUDGET_USD * 0.2),
+    });
     this.revision = { changes: [], feedback, n };
     RunsStore.updateRun(this.id, { budgetUsd: this.budgetOffset + config.REVISION_BUDGET_USD, status: "running", stopReason: null });
     RevisionsStore.updateRevision(this.id, n, { status: "running" });
@@ -814,6 +993,16 @@ class Pipeline {
     return this.finishRevision({ deployed: false, note: this.stopReason ?? "The new version never passed its /health check", restored });
   }
 
+  /** A cancelled feedback round: the previous version stays live (restored if verify had replaced it). */
+  async cancelRevision(): Promise<void> {
+    let restored = true;
+    if (this.liveReplaced) {
+      await callDeployer("/rollback", { port: APP_PORT, runId: this.id });
+      restored = await this.verifyHealth();
+    }
+    return this.finishRevision({ deployed: false, note: "Cancelled by the user", restored });
+  }
+
   async finishRevision({
     clean = true,
     deployed,
@@ -839,11 +1028,20 @@ class Pipeline {
   private async reload(): Promise<void> {
     const stages = RunsStore.listStages(this.id);
     this.seq = stages.reduce((max, s) => Math.max(max, s.seq), 0);
+    const development: DevHandoff[] = [];
+    let builtInParts = false;
     for (const stage of stages) {
       if (stage.status !== "succeeded" || stage.stageKey === "verify") continue;
       const text = await readFile(join(this.paths.stages, stage.dirName, "handoff.json"), "utf8").catch(() => null);
-      if (text) this.handoffs[stage.stageKey as AgentStageKey] = JSON.parse(text) as unknown;
+      if (!text) continue;
+      this.handoffs[stage.stageKey as AgentStageKey] = JSON.parse(text) as unknown;
+      if (stage.stageKey === "development") {
+        development.push(JSON.parse(text) as DevHandoff);
+        if (/^Development \((scaffold|finish|F-[\d+F-]+)\)$/.test(stage.label)) builtInParts = true;
+      }
     }
+    // Built in parts, the last development handoff is only the finish: rebuild the whole picture from every part, fix and change round.
+    if (builtInParts) this.handoffs.development = mergeDevHandoffs(development);
     this.deployedCommit = await headCommit(this.paths);
     this.acceptanceCommit = (await workspaceHasFile(this.paths, "acceptance/harness.mjs")) ? this.deployedCommit : null;
   }
@@ -915,6 +1113,27 @@ ${this.renderCustomerSummary()}${this.renderPrdGateSummary()}${this.renderAccept
   }
 }
 
+/** Below this a development part can't do meaningful work; it stops instead (and later feature groups are skipped). */
+const PART_MIN_USD = 0.4;
+
+/** What a development part hands to the parts after it. */
+function partSummary(id: string, featureIds: string[], handoff: DevHandoff): DevPartSummary {
+  return {
+    featureIds,
+    id,
+    knownGaps: handoff.knownGaps ?? [],
+    notes: handoff.notes ?? "",
+    screens: (handoff.screens ?? []).map(({ path, screenId }) => ({ path, screenId })),
+  };
+}
+
+/** Fix-round work may spend the fix reserve; deployment repair may spend everything. */
+function reserveAccess(stageKey: AgentStageKey, options: StepOptions): ReserveAccess {
+  if (stageKey === "deployment") return "deploy";
+  if (options.fix || stageKey === "testing" || options.rereview) return "repair";
+  return "build";
+}
+
 function isBudgetStop(outcome: StepOutcome): boolean {
   return outcome === "stopped_budget" || outcome === "not_started";
 }
@@ -922,6 +1141,9 @@ function isBudgetStop(outcome: StepOutcome): boolean {
 function cell(text: string): string {
   return String(text ?? "").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 }
+
+/** Someone is watching if the build's page polled within 10 s; a minute away ends the wait. */
+const WATCH_WINDOWS = { leaveMs: 60_000, startMs: 10_000 };
 
 /** Stages that revise by updating their previous output; requirements and development have their own revise prompts. */
 const REVISED_BY_DELTA = new Set<AgentStageKey>(["testCases", "architecture", "uiDesign", "acceptance"]);

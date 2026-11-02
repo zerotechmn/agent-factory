@@ -3,6 +3,8 @@ import { Link, useLocation } from "wouter";
 
 import { DESIGN_SYSTEM_OPTIONS } from "../runs.constants";
 import { useCreateRun } from "../runs.hooks";
+import { rememberRecentBuild } from "../runs.utils";
+import { RecentBuilds } from "./recent-builds";
 import type { DesignSystem } from "../runs.types";
 
 const EXAMPLES = [
@@ -19,7 +21,15 @@ export function NewRunPage() {
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    createRun.mutate({ designSystem, prompt: prompt.trim() }, { onSuccess: ({ id }) => navigate(`/runs/${id}`) });
+    createRun.mutate(
+      { designSystem, prompt: prompt.trim() },
+      {
+        onSuccess: ({ id }) => {
+          rememberRecentBuild({ createdAt: new Date().toISOString(), id, prompt: prompt.trim() });
+          navigate(`/runs/${id}`);
+        },
+      },
+    );
   };
 
   return (
@@ -79,6 +89,8 @@ export function NewRunPage() {
           </p>
         )}
       </form>
+
+      <RecentBuilds />
 
       <div className="mt-10">
         <p className="text-sm font-medium text-stone-500">Try one of these</p>

@@ -114,10 +114,19 @@ function syncFeatures(runId: string, stamp: { actor: string; at: string }): void
   }
 }
 
+/**
+ * Which features a development handoff speaks for. Undefined: all of them (a
+ * single development session, or the merged result of all parts). A list: one
+ * feature group's session, which moves only its own features and their tests.
+ * "none": the scaffold and finish sessions, which own no feature.
+ */
+export type DevelopmentScope = string[] | "none" | undefined;
+
 export function onDevelopmentDone(
   runId: string,
   handoff: unknown,
   { actor, at = now() }: Stamp,
+  scope: DevelopmentScope = undefined,
 ): void {
   const dev = (handoff ?? {}) as {
     knownGaps?: string[];
@@ -128,11 +137,12 @@ export function onDevelopmentDone(
   const stamp = { actor, at };
   const claimable = (c: BoardCard) => c.column === "todo" || c.column === "doing";
 
+  const inScope = (card: BoardCard) => !Array.isArray(scope) || card.links.some((id) => scope.includes(id)) || scope.includes(card.id);
   const written = new Set((dev.testsWritten ?? []).map(testKey));
-  for (const card of cards.filter((c) => c.kind === "test")) {
+  for (const card of cards.filter((c) => c.kind === "test" && inScope(c))) {
     if (written.has(testKey(card.id))) {
       if (claimable(card)) BoardStore.moveCard(runId, card.id, "built", { ...stamp, note: "Automated test written" });
-    } else if (card.column === "todo") {
+    } else if (card.column === "todo" && scope === undefined) {
       BoardStore.moveCard(runId, card.id, "todo", { ...stamp, note: "Not covered by an automated test yet" });
     }
   }
@@ -144,7 +154,8 @@ export function onDevelopmentDone(
     BoardStore.moveCard(runId, card.id, "built", { ...stamp, note: screen.path ? `Opens at ${screen.path}` : "Not reachable by URL" });
   }
 
-  for (const card of cards.filter((c) => c.kind === "feature" && claimable(c))) {
+  if (scope === "none") return;
+  for (const card of cards.filter((c) => c.kind === "feature" && claimable(c) && inScope(c))) {
     const gap = (dev.knownGaps ?? []).find((g) => g.includes(card.id));
     if (gap) BoardStore.moveCard(runId, card.id, card.column, { ...stamp, note: `Known gap: ${gap}` });
     else BoardStore.moveCard(runId, card.id, "built", { ...stamp, note: "Implemented" });
@@ -270,8 +281,9 @@ async function backfill(runId: string): Promise<void> {
       }
       if (stage.status !== "succeeded") continue;
       const handoff = await json(stage.dirName);
-      testsWritten = ((handoff as { testsWritten?: string[] } | null)?.testsWritten ?? testsWritten);
-      onDevelopmentDone(runId, handoff, finished);
+      // Built in parts, each part adds its own tests; a single session reports them all.
+      testsWritten = [...new Set([...testsWritten, ...((handoff as { testsWritten?: string[] } | null)?.testsWritten ?? [])])];
+      onDevelopmentDone(runId, handoff, finished, scopeFromLabel(stage.label));
     } else if (stage.stageKey === "verify") {
       const gate = (await json(stage.dirName)) as GateResult | null;
       if (!gate) continue;
@@ -279,6 +291,15 @@ async function backfill(runId: string): Promise<void> {
     }
   }
   console.info("[board] rebuilt from stage folders", { cards: BoardStore.listCards(runId).length, runId });
+}
+
+/** "Development (F-02+F-03)" speaks for F-02 and F-03; "(scaffold)" and "(finish)" for no feature; plain "Development" for all. */
+export function scopeFromLabel(label: string): DevelopmentScope {
+  const part = label.match(/^Development \((.+)\)$/)?.[1];
+  if (!part) return undefined;
+  if (part === "scaffold" || part === "finish") return "none";
+  const ids = part.split("+").filter((id) => /^F-\d+$/.test(id));
+  return ids.length ? ids : undefined;
 }
 
 function testCardsByKey(cards: BoardCard[]): Map<string, BoardCard> {

@@ -368,3 +368,8 @@ function parseStrings(raw: string): string[] {
     return [];
   }
 }
+
+/** Part of deleting a run: its query log. Lessons stay; they're engineering knowledge, not the run's data. */
+export function deleteRunQueries(runId: string): void {
+  db.query("DELETE FROM library_queries WHERE run_id = ?").run(runId);
+}

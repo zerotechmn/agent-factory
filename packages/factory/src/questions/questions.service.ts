@@ -1,4 +1,6 @@
 import { ConflictError, ValidationError } from "../lib/errors";
+import { throwIfCancelled } from "../pipeline/pipeline.cancel";
+import { isWatched } from "../runs/runs.presence";
 import * as RunsStore from "../runs/runs.store";
 import * as QuestionsStore from "./questions.store";
 import type { Answer, Checkpoint, CheckpointResult, PrdCheckpointContext, Question } from "./questions.types";
@@ -17,26 +19,58 @@ export async function askCustomer(
     checkpoint,
     context = null,
     items,
+    onlyWhileWatched = null,
     pollMs = POLL_MS,
+    resume = false,
     timeoutMs,
-  }: { checkpoint: Checkpoint; context?: PrdCheckpointContext | null; items: Question[]; pollMs?: number; timeoutMs: number },
+  }: {
+    checkpoint: Checkpoint;
+    context?: PrdCheckpointContext | null;
+    items: Question[];
+    /**
+     * Wait only while someone has the build open: skip the wait when nobody
+     * was on its page within `startMs`, and stop waiting once nobody has been
+     * for `leaveMs`. Null: wait for the full timeout regardless.
+     */
+    onlyWhileWatched?: { leaveMs: number; startMs: number } | null;
+    pollMs?: number;
+    /** A run resumed after a restart: reuse this checkpoint if it was already opened, instead of asking again. */
+    resume?: boolean;
+    timeoutMs: number;
+  },
 ): Promise<CheckpointResult> {
-  const openedAt = new Date();
-  const deadline = new Date(openedAt.getTime() + timeoutMs);
-  QuestionsStore.openCheckpoint(runId, { checkpoint, context, deadline: deadline.toISOString(), items: items.map(normalize), openedAt: openedAt.toISOString() });
+  const earlier = resume ? QuestionsStore.getCheckpoint(runId, checkpoint) : null;
+  // Answered before the restart: the customer isn't asked twice.
+  if (earlier?.closedAt && earlier.answers && earlier.closedBy) {
+    return { answers: earlier.answers, closedBy: earlier.closedBy, feedback: earlier.feedback };
+  }
+  // Still open: keep waiting until the deadline the customer was shown, not a fresh one.
+  const deadline = earlier ? new Date(earlier.deadline) : new Date(Date.now() + timeoutMs);
+  if (!earlier) {
+    QuestionsStore.openCheckpoint(runId, { checkpoint, context, deadline: deadline.toISOString(), items: items.map(normalize), openedAt: new Date().toISOString() });
+  }
+  const defaults = () => items.map((q) => ({ answeredBy: "default" as const, id: q.id, value: normalize(q).default }));
+  // Nobody has the build open: nobody would answer, so don't make the run wait.
+  if (onlyWhileWatched && !earlier && !isWatched(runId, onlyWhileWatched.startMs)) {
+    QuestionsStore.closeCheckpoint(runId, checkpoint, { answers: defaults(), at: new Date().toISOString(), closedBy: "timeout", feedback: null });
+    return { answers: defaults(), closedBy: "timeout", feedback: null };
+  }
   RunsStore.updateRun(runId, { status: "waiting_customer" });
   try {
     for (;;) {
       const state = QuestionsStore.getCheckpoint(runId, checkpoint);
       if (state?.closedAt && state.answers && state.closedBy) return { answers: state.answers, closedBy: state.closedBy, feedback: state.feedback };
-      if (Date.now() >= deadline.getTime()) {
-        const answers = items.map((q) => ({ answeredBy: "default" as const, id: q.id, value: normalize(q).default }));
+      const left = onlyWhileWatched !== null && !isWatched(runId, onlyWhileWatched.leaveMs);
+      if (left || Date.now() >= deadline.getTime()) {
+        const answers = defaults();
         // The customer may have answered in the same instant; their answer wins.
         if (QuestionsStore.closeCheckpoint(runId, checkpoint, { answers, at: new Date().toISOString(), closedBy: "timeout", feedback: null })) {
           return { answers, closedBy: "timeout", feedback: null };
         }
         continue;
       }
+      // Cancelling from the portal ends the wait at once.
+      throwIfCancelled(runId);
       await Bun.sleep(pollMs);
     }
   } finally {

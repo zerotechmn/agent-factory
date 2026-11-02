@@ -1,8 +1,9 @@
 import type { BoardColumn, CardKind, DesignSystem, RunStatus, StageStatus } from "./runs.types";
 
-export const TERMINAL_STATUSES: RunStatus[] = ["deployed", "deployed_partial", "failed", "failed_budget"];
+export const TERMINAL_STATUSES: RunStatus[] = ["deployed", "deployed_partial", "failed", "failed_budget", "cancelled"];
 
 export const RUN_STATUS_LABELS: Record<RunStatus, string> = {
+  cancelled: "Cancelled",
   deployed: "Deployed",
   deployed_partial: "Deployed with known issues",
   failed: "Failed",
@@ -49,6 +50,18 @@ export const STAGE_DESCRIPTIONS: Record<string, string> = {
   uiDesign: "Designs every screen, its states and components",
   verify: "Runs the tests, starts the app, opens every screen and runs the acceptance tests (automated, no AI)",
 };
+
+/**
+ * A larger app's development runs in parts, all with stage key "development";
+ * the label says which part. Plain labels fall back to STAGE_DESCRIPTIONS.
+ */
+export function stageDescription(stageKey: string, label: string): string | undefined {
+  const part = label.match(/^Development \((.+)\)$/)?.[1];
+  if (part === "scaffold") return "Sets up the project, data model and app shell every feature builds on";
+  if (part === "finish") return "Seeds demo data, then checks the full test suite and every screen";
+  if (part && /^F-\d+/.test(part)) return `Builds ${part.replaceAll("+", ", ")} in its own session, test-first`;
+  return STAGE_DESCRIPTIONS[stageKey];
+}
 
 export const REDIRECT_DELAY_MS = 4_000;
 

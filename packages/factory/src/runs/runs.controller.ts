@@ -7,8 +7,16 @@ export async function createRun({ benchmarkToken, body, ip }: { benchmarkToken: 
   return respond(async () => RunsService.createRun({ benchmarkToken, body, ip }), { message: "Run queued", status: 201 });
 }
 
-export async function getRun(id: string) {
-  return respond(async () => RunsService.getRunDetail(id));
+export async function getRun(id: string, { watching = false }: { watching?: boolean } = {}) {
+  return respond(async () => RunsService.getRunDetail(id, { watching }));
+}
+
+export async function cancelRun(id: string) {
+  return respond(async () => RunsService.cancelRun(id), { message: "Build cancelled" });
+}
+
+export async function deleteRun(id: string) {
+  return respond(async () => RunsService.deleteRun(id), { message: "Build deleted" });
 }
 
 export async function answerQuestions(id: string, body: unknown) {

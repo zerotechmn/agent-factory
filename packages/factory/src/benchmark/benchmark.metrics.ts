@@ -2,6 +2,8 @@ import { Database } from "bun:sqlite";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { BACKUP_DIR, factoryIsRunning, SNAPSHOT_FILE } from "../lib/db.lock";
+
 /** What the benchmark needs about one run; loaded read-only from the database and run folders. */
 export type RunData = {
   /** handoff.json per stage folder, null when the stage wrote none. */
@@ -108,11 +110,22 @@ export function summarize(metrics: RunMetrics[]): BenchmarkSummary {
   };
 }
 
+/**
+ * The database file a reader outside the factory may open. While a factory
+ * runs, the live WAL database must not be opened from another machine (Docker
+ * vs the Mac): that can corrupt it. The factory's 10-minute snapshot is a
+ * standalone copy that is safe to read.
+ */
+export function readableDatabase(dataDir: string): { path: string; snapshot: boolean } {
+  if (factoryIsRunning(dataDir)) return { path: join(dataDir, BACKUP_DIR, SNAPSHOT_FILE), snapshot: true };
+  return { path: join(dataDir, "factory.sqlite"), snapshot: false };
+}
+
 /** Reads one run without changing anything: SELECTs only, plus the run's stage folders. */
 export async function loadRunData(dataDir: string, runId: string): Promise<RunData | null> {
   // Not { readonly }: SQLite can't open a WAL database read-only when its -shm file is missing.
   // Only SELECTs run here, and `create: false` never makes a new database.
-  const db = new Database(join(dataDir, "factory.sqlite"), { create: false, readwrite: true });
+  const db = new Database(readableDatabase(dataDir).path, { create: false, readwrite: true });
   try {
     const run = db
       .query<{ cost: number; created_at: string; id: string; status: string; updated_at: string }, [string]>(
@@ -135,7 +148,7 @@ export async function loadRunData(dataDir: string, runId: string): Promise<RunDa
     return {
       handoffs,
       lessonsRecorded: tableExists(db, "library_lessons") ? count("SELECT count(*) AS n FROM library_lessons WHERE last_run_id = ?") : 0,
-      librarianCalls: tableExists(db, "library_queries") ? count("SELECT count(*) AS n FROM library_queries WHERE run_id = ?") : 0,
+      librarianCalls: tableExists(db, "library_queries") ? count("SELECT count(*) AS n FROM library_queries WHERE run_id = ? AND tool NOT LIKE 'auto:%' AND tool <> 'limit'") : 0,
       run: { costUsd: Number(run.cost ?? 0), createdAt: run.created_at, id: run.id, status: run.status, updatedAt: run.updated_at },
       stages: stages.map((s) => ({
         costUsd: Number(s.cost ?? 0),

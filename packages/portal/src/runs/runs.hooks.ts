@@ -11,7 +11,8 @@ export const RUN_KEYS = {
 
 export function useRun(id: string) {
   return useQuery({
-    queryFn: () => request<Run>(`/api/runs/${id}`),
+    // ?watch=1 tells the factory someone has this build open, so it's worth waiting for their answers.
+    queryFn: () => request<Run>(`/api/runs/${id}?watch=1`),
     queryKey: RUN_KEYS.detail(id),
     // Poll until the run reaches a terminal state.
     refetchInterval: (query) => {
@@ -61,6 +62,20 @@ export function useSubmitFeedback(id: string) {
         method: "POST",
       }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: RUN_KEYS.detail(id) }),
+  });
+}
+
+export function useCancelRun(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => request<{ cancelled: boolean }>(`/api/runs/${id}/cancel`, { method: "POST" }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: RUN_KEYS.detail(id) }),
+  });
+}
+
+export function useDeleteRun(id: string) {
+  return useMutation({
+    mutationFn: () => request<{ deleted: boolean }>(`/api/runs/${id}`, { method: "DELETE" }),
   });
 }
 

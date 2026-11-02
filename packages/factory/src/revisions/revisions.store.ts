@@ -82,3 +82,8 @@ function map(row: Raw): Revision {
     status: row.status,
   };
 }
+
+/** Part of deleting a run; the caller wraps every store's deleteRun in one transaction. */
+export function deleteRun(runId: string): void {
+  db.query("DELETE FROM run_revisions WHERE run_id = ?").run(runId);
+}
