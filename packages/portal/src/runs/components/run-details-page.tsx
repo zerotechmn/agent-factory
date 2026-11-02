@@ -1,12 +1,12 @@
 import { useState } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Link } from "wouter";
 
 import { AgentAvatar } from "../../agents/components/agent-avatar";
 import { STAGE_MOODS } from "../runs.constants";
 import { useRun, useStageReport } from "../runs.hooks";
 import { formatUsd } from "../runs.utils";
+import { RunPage } from "./run-chrome";
 
 export function RunDetailsPage({ id }: { id: string }) {
   const { data: run } = useRun(id);
@@ -15,15 +15,8 @@ export function RunDetailsPage({ id }: { id: string }) {
   const report = useStageReport(id, dirName);
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-12">
-      <Link href={`/runs/${id}`} className="text-sm text-ds-fg-sec transition-colors hover:text-ds-fg">← Back to status</Link>
-      <h1 className="mt-6 type-md-lg">Agent reports</h1>
-      <p className="mt-1 text-sm text-ds-fg-sec">
-        What each stage produced. The PRD and Verify reports are rendered by the factory; other agents write their own.
-        Machine handoffs and full transcripts are in the run folder on the factory host (<code>data/runs/{id}</code>).
-      </p>
-
-      <div className="mt-8 grid gap-6 md:grid-cols-[14rem_1fr]">
+    <RunPage active="/details" id={id} run={run} width="max-w-5xl">
+      <div className="mt-2 grid gap-6 md:grid-cols-[14rem_1fr]">
         <nav className="flex gap-2 overflow-x-auto md:flex-col">
           {run?.stages.map((stage) => (
             <button
@@ -54,7 +47,7 @@ export function RunDetailsPage({ id }: { id: string }) {
           )}
         </article>
       </div>
-    </main>
+    </RunPage>
   );
 }
 

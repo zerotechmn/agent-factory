@@ -177,10 +177,10 @@ function Library({ data }: { data: LibraryOverview }) {
         ) : modules.length === 0 ? (
           <Empty>No module matches “{query.trim()}”.</Empty>
         ) : (
-          <ul className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <ul className="grid grid-cols-[repeat(auto-fill,minmax(10rem,15rem))] gap-6">
             {modules.map((item) => (
               <li key={item.name}>
-                <Folder cloth={binding(item.name)} meta={item.tags.slice(0, 4).join(" · ")} name={item.name} shelf={shelfOfTags(item.tags)} />
+                <Folder cloth={binding(item.name)} meta={item.tags.slice(0, 3).join(" · ")} name={item.name} shelf={shelfOfTags(item.tags)} />
               </li>
             ))}
           </ul>
@@ -551,18 +551,19 @@ function SectionHeader({ note, title }: { note: string; title: string }) {
 /** A reference module as a Finder folder, tinted in its cloth. */
 function Folder({ cloth, meta, name, shelf }: { cloth: Binding; meta: string; name: string; shelf: string }) {
   return (
-    <article className="folder h-full" style={clothStyle(cloth)}>
+    // Shaped like a macOS Finder folder: about 9:7, never wider than 15rem; the label sits at the foot of the flap.
+    <article className="folder aspect-[9/7] w-full max-w-60" style={clothStyle(cloth)}>
       <span aria-hidden="true" className="folder-back" />
       <span aria-hidden="true" className="folder-paper" />
-      <div className="cloth folder-front min-w-0 px-5 pt-24 pb-4">
+      <div className="cloth folder-front flex min-w-0 flex-col justify-end px-4 pb-3.5">
         <header className="flex items-center gap-2">
-          <ShelfIcon className="shrink-0" shelf={shelf} size={18} style={{ filter: "drop-shadow(var(--cloth-emboss))" }} />
+          <ShelfIcon className="shrink-0" shelf={shelf} size={16} style={{ filter: "drop-shadow(var(--cloth-emboss))" }} />
           {/* The slug stays on hover: it's the name agents copy the module by. */}
-          <h3 className="min-w-0 flex-1 truncate font-serif text-lg cloth-text" title={name}>
+          <h3 className="min-w-0 flex-1 truncate font-serif text-base cloth-text" title={name}>
             {moduleTitle(name)}
           </h3>
         </header>
-        {meta && <p className="mt-0.5 truncate pl-[26px] text-xs opacity-75">{meta}</p>}
+        {meta && <p className="mt-0.5 truncate pl-6 text-[11px] opacity-75">{meta}</p>}
       </div>
     </article>
   );

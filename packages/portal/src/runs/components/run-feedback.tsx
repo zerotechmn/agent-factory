@@ -4,6 +4,7 @@ import { Alert, Button, Textarea } from "../../design-system";
 import { useSubmitFeedback } from "../runs.hooks";
 import type { Revision } from "../runs.types";
 import { formatUsd } from "../runs.utils";
+import { CARD_CLASS } from "./run-card";
 
 const REVISION_STATUS_LABELS: Record<Revision["status"], string> = {
   deployed: "Live",
@@ -26,7 +27,7 @@ export function RunFeedback({ canSubmit, revisions, runId }: { canSubmit: boolea
   };
 
   return (
-    <section className="mt-6 rounded-[var(--ds-radius-xs)] border border-ds-line bg-ds-card p-4" aria-labelledby="feedback-title">
+    <section className={`${CARD_CLASS} p-5`} aria-labelledby="feedback-title">
       <h2 id="feedback-title" className="text-ds-fg">
         Feedback on your app
       </h2>

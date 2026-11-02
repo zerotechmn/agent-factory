@@ -3,6 +3,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Alert, Button, Textarea } from "../../design-system";
 import { useAnswerQuestions } from "../runs.hooks";
 import type { OpenQuestions, Question } from "../runs.types";
+import { CARD_CLASS } from "./run-card";
 
 const OTHER = "__other__";
 
@@ -28,7 +29,7 @@ export function RunQuestions({ open, runId }: { open: OpenQuestions; runId: stri
   };
 
   return (
-    <form onSubmit={submit} className="mt-6 rounded-[var(--ds-radius-xs)] border border-ds-accent/30 bg-ds-card-warm p-4" aria-labelledby="questions-title">
+    <form onSubmit={submit} className={`${CARD_CLASS} border-ds-accent/40 p-5`} aria-labelledby="questions-title">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 id="questions-title" className="text-ds-fg">
           {spec ? (open.context?.changes ? "Please confirm the changes to your app" : "Please review the spec before we build") : "A few questions before we write the spec"}

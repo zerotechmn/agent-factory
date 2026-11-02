@@ -18,10 +18,10 @@ export const TOOL_LABELS: Record<string, { kind: EventKind; label: string }> = {
   spec_trace: { kind: "asked", label: "Traced the spec" },
 };
 
-export const KIND_STYLES: Record<EventKind, { label: string; tone: string }> = {
-  asked: { label: "Agent asked", tone: "bg-ds-accent-soft text-ds-accent ring-ds-accent/20" },
-  handed: { label: "Factory handed over", tone: "bg-ds-success-soft text-ds-success ring-ds-success/20" },
-  limit: { label: "Limit", tone: "bg-ds-card-2 text-ds-fg-sec ring-ds-line" },
+export const KIND_LABELS: Record<EventKind, string> = {
+  asked: "agent asked",
+  handed: "factory handed over",
+  limit: "limit",
 };
 
 /** Where a lesson's problem was caught. */

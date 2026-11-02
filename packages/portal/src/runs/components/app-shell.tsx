@@ -23,7 +23,7 @@ export function AppShell({ children }: { children: (newRunKey: number) => ReactN
     <TooltipProvider>
       <SidebarProvider>
         <HomeSidebar onNewRun={newRun} />
-        <SidebarInset>
+        <SidebarInset className="min-w-0">
           <MobileSidebarTrigger />
           {children(newRunKey)}
         </SidebarInset>
@@ -36,5 +36,5 @@ export function AppShell({ children }: { children: (newRunKey: number) => ReactN
 function MobileSidebarTrigger() {
   const { isMobile } = useSidebar();
   if (!isMobile) return null;
-  return <SidebarTrigger className="absolute top-3 left-3" />;
+  return <SidebarTrigger className="absolute top-2.5 left-3 z-20" />;
 }

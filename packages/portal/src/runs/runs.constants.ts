@@ -1,4 +1,5 @@
 import type { AgentMood } from "../agents/agents.constants";
+import type { BadgeVariant } from "../design-system";
 import type { BoardColumn, CardKind, DesignSystem, RunStatus, StageStatus } from "./runs.types";
 
 export const TERMINAL_STATUSES: RunStatus[] = ["deployed", "deployed_partial", "failed", "failed_budget"];
@@ -13,12 +14,22 @@ export const RUN_STATUS_LABELS: Record<RunStatus, string> = {
   waiting_customer: "Waiting for your answers",
 };
 
-export const STAGE_STATUS_ICONS: Record<StageStatus, string> = {
-  failed: "✕",
-  running: "◌",
-  skipped: "–",
-  stopped_budget: "$",
-  succeeded: "✓",
+export const RUN_STATUS_TONES: Record<RunStatus, BadgeVariant> = {
+  deployed: "success",
+  deployed_partial: "warning",
+  failed: "error",
+  failed_budget: "error",
+  queued: "default",
+  running: "accent",
+  waiting_customer: "warning",
+};
+
+export const STAGE_STATUS_LABELS: Record<StageStatus, string> = {
+  failed: "Failed",
+  running: "Working",
+  skipped: "Skipped",
+  stopped_budget: "Out of budget",
+  succeeded: "Done",
 };
 
 export const STAGE_MOODS: Record<StageStatus, AgentMood> = {
@@ -77,14 +88,6 @@ export const CARD_KIND_LABELS: Record<CardKind, string> = {
   smoke: "Smoke check",
   test: "Test case",
 };
-
-/** Filter chips; smoke checks sit with test cases. */
-export const BOARD_FILTERS: { kinds: CardKind[]; label: string; value: string }[] = [
-  { kinds: ["feature", "screen", "test", "smoke"], label: "All", value: "all" },
-  { kinds: ["feature"], label: "Features", value: "feature" },
-  { kinds: ["screen"], label: "Screens", value: "screen" },
-  { kinds: ["test", "smoke"], label: "Tests", value: "test" },
-];
 
 /** A card moved this recently is highlighted so movement is visible while polling. */
 export const RECENT_MOVE_MS = 8_000;
