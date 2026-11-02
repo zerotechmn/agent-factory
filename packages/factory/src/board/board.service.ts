@@ -10,12 +10,15 @@ import * as BoardStore from "./board.store";
 import type { Board, BoardCard } from "./board.types";
 import {
   featureColumnFromTests,
+  featureColumnWhileBuilding,
+  parseTestCounts,
   parseTestLog,
   seedsFromPrd,
   seedsFromTestPlan,
   testColumnAfterVerify,
   testIdsIn,
   testKey,
+  toolResultText,
 } from "./board.utils";
 
 const EVENT_LIMIT = 300;
@@ -42,57 +45,73 @@ export function onTestPlan(runId: string, plan: unknown, prd: unknown, { actor, 
 }
 
 /**
- * Watches the developer's file writes: a test case id appearing in written
- * code means that test is being written (or, after a failed verify, fixed).
- * Free and immediate, and it works without the agent's cooperation.
+ * Watches the developer's work without asking anything of it (no tool, no
+ * prompt tokens): a test case id in written code means that test is being
+ * written or fixed, and the developer's own test runs show which cases pass
+ * locally. Features follow their tests. Only verify marks anything verified.
  */
 export function developerObserver(runId: string, { actor, at }: Stamp): (message: SDKMessage) => void {
-  const seen = new Set<string>();
+  const touched = new Set<string>();
+  const bashCalls = new Set<string>();
   return (message) => {
-    if (message.type !== "assistant") return;
-    const ids = message.message.content.flatMap((block) =>
-      block.type === "tool_use" ? testIdsIn(writtenText(block.name, block.input)) : [],
-    );
-    const fresh = ids.filter((id) => !seen.has(id));
-    if (!fresh.length) return;
-    fresh.forEach((id) => seen.add(id));
-
-    const cards = BoardStore.listCards(runId);
-    const tests = testCardsByKey(cards);
     const stamp = { actor, at: at ?? now() };
-    for (const id of fresh) {
-      const card = tests.get(id);
-      if (!card || (card.column !== "todo" && card.column !== "failed")) continue;
-      BoardStore.moveCard(runId, card.id, "doing", {
-        ...stamp,
-        note: card.column === "failed" ? "Being fixed" : "Test being written",
-      });
-      for (const featureId of card.links) {
-        const feature = cards.find((c) => c.id === featureId);
-        if (feature?.column === "todo") BoardStore.moveCard(runId, featureId, "doing", { ...stamp, note: "Work started" });
+    if (message.type === "assistant") {
+      const ids: string[] = [];
+      for (const block of message.message.content) {
+        if (block.type !== "tool_use") continue;
+        if (block.name === "Bash") bashCalls.add(block.id);
+        ids.push(...testIdsIn(writtenText(block.name, block.input)));
       }
+      const fresh = ids.filter((id) => !touched.has(id));
+      if (!fresh.length) return;
+      fresh.forEach((id) => touched.add(id));
+      const tests = testCardsByKey(BoardStore.listCards(runId));
+      for (const id of fresh) {
+        const card = tests.get(id);
+        if (!card || (card.column !== "todo" && card.column !== "failed")) continue;
+        BoardStore.moveCard(runId, card.id, "doing", { ...stamp, note: card.column === "failed" ? "Being fixed" : "Test being written" });
+      }
+      syncFeatures(runId, stamp);
+      return;
+    }
+
+    if (message.type !== "user" || !Array.isArray(message.message.content)) return;
+    for (const block of message.message.content) {
+      if (block.type !== "tool_result" || !bashCalls.has(block.tool_use_id)) continue;
+      const output = toolResultText(block.content);
+      const results = parseTestLog(output);
+      const counts = parseTestCounts(output);
+      // A fully green run proves every test written so far passes, even when the output lists no names.
+      if (counts && counts.failed === 0 && counts.passed > 0) {
+        for (const id of touched) if (!results.has(id)) results.set(id, "passed");
+      }
+      if (!results.size) continue;
+      const tests = testCardsByKey(BoardStore.listCards(runId));
+      for (const [id, outcome] of results) {
+        const card = tests.get(id);
+        if (!card) continue;
+        if (outcome === "passed" && card.column !== "built" && card.column !== "verified") {
+          BoardStore.moveCard(runId, card.id, "built", { ...stamp, note: "Passing in the developer's test run" });
+        }
+        if (outcome === "failed") BoardStore.moveCard(runId, card.id, "doing", { ...stamp, note: "Failing in the developer's test run" });
+      }
+      syncFeatures(runId, stamp);
     }
   };
 }
 
-/** The developer's own updates (update_tasks tool). It may only claim work, never verify it. */
-export function applyDeveloperUpdate(
-  runId: string,
-  updates: { id: string; note?: string; status: "doing" | "built" }[],
-  { actor }: Stamp,
-): { moved: string[]; unknown: string[] } {
-  const cards = new Map(BoardStore.listCards(runId).map((c) => [c.id.toUpperCase(), c]));
-  const moved: string[] = [];
-  const unknown: string[] = [];
-  for (const update of updates) {
-    const card = cards.get(update.id.trim().toUpperCase()) ?? cards.get(testKey(update.id));
-    if (!card) {
-      unknown.push(update.id);
-      continue;
-    }
-    if (BoardStore.moveCard(runId, card.id, update.status, { actor, at: now(), note: update.note ?? card.note })) moved.push(card.id);
+/** While building, a feature is as far along as its tests; verify settles it later. */
+function syncFeatures(runId: string, stamp: { actor: string; at: string }): void {
+  const cards = BoardStore.listCards(runId);
+  for (const feature of cards.filter((c) => c.kind === "feature")) {
+    const tests = cards.filter((c) => c.kind === "test" && c.links.includes(feature.id));
+    const next = featureColumnWhileBuilding(tests);
+    if (!next || next === feature.column) continue;
+    // Building never undoes a verification; only a failing local test reopens it.
+    if (feature.column === "verified" && next === "built") continue;
+    const passing = tests.filter((t) => t.column === "built" || t.column === "verified").length;
+    BoardStore.moveCard(runId, feature.id, next, { ...stamp, note: `${passing} of ${tests.length} tests passing locally` });
   }
-  return { moved, unknown };
 }
 
 export function onDevelopmentDone(
@@ -221,7 +240,7 @@ async function backfill(runId: string): Promise<void> {
     } else if (stage.stageKey === "development") {
       const observe = developerObserver(runId, { actor: stage.label, at: stage.startedAt });
       for (const line of ((await read(stage.dirName, "transcript.jsonl")) ?? "").split("\n")) {
-        if (line.includes('"tool_use"')) observe(JSON.parse(line) as SDKMessage);
+        if (line.includes('"tool_use"') || line.includes('"tool_result"')) observe(JSON.parse(line) as SDKMessage);
       }
       if (stage.status !== "succeeded") continue;
       const handoff = await json(stage.dirName);
@@ -246,6 +265,8 @@ function writtenText(tool: string, input: unknown): string {
   if (tool === "Write") return i.content ?? "";
   if (tool === "Edit") return i.new_string ?? "";
   if (tool === "MultiEdit") return (i.edits ?? []).map((e) => e.new_string ?? "").join("\n");
+  // Developers often write files with heredocs (cat > test/x.test.js <<'EOF').
+  if (tool === "Bash") return (input as { command?: string } | null)?.command ?? "";
   return "";
 }
 

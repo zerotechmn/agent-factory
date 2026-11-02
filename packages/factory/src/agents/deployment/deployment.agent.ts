@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { lessonsField } from "../../librarian/librarian.schema";
 import { jsonBlock, READ_TOOLS, type AgentDefinition } from "../agents.shared";
 import { DEPLOYMENT_TOOL_NAMES, deploymentMcpServer } from "./deployment.tools";
 
@@ -8,6 +9,7 @@ const schema = z.object({
   containerPort: z.number().int(),
   deployed: z.boolean(),
   healthStatus: z.number().int().nullable(),
+  lessons: lessonsField.describe("Reusable lessons about what broke the container (step build, run or health) and the fix. Engineering knowledge only, never the product or its data. Empty if none."),
   notes: z.string(),
 });
 

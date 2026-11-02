@@ -130,14 +130,39 @@ Who moves cards:
 
 | Mover | Move | How |
 |---|---|---|
-| Developer | Test cases → In progress | Automatic: a test case id appears in code the developer writes (tests are named `TC-3: …`) |
-| Developer | Features and screens → In progress / Built | The developer calls the `update_tasks` tool, batched with other tool calls so it adds no turns |
+| Developer's stream | Test cases → In progress | A test case id appears in code the developer writes, through Write/Edit or a shell heredoc (tests are named `TC-3: …`) |
+| Developer's stream | Test cases → Built / back to In progress | The developer's own test runs: per-test result lines, or a fully green total (`# pass 59 / # fail 0`), which proves every test written so far passes |
+| Developer's stream | Features → In progress / Built | Follow their linked test cases |
 | Development handoff | Test cases → Built (`testsWritten`); screens → Built (their URL); features → Built, unless listed in `knownGaps` | When the stage finishes |
 | Verify gate | Test cases → Verified / Failed | From each test's result line in `tests.log` (TAP, spec reporters, bun, pytest -v), or from the whole suite passing |
 | Verify gate | Smoke checks and screens → Verified / Failed | From HTTP and browser check results |
 | Verify gate | Features → Verified / Failed | From their linked test cases |
 
-Only the verify gate can move a card to Verified or Failed, so the board never shows an agent's claim as proven. Runs finished before the board existed are rebuilt from their stage folders the first time their board is opened. Board updates are reporting only: an error there is logged and never fails a build. Tables: `board_cards` and `board_events`.
+Everything is read from the message stream the factory already receives, so the board costs no tokens and asks nothing of the agents. Only the verify gate can move a card to Verified or Failed, so the board never shows an agent's claim as proven. Runs finished before the board existed are rebuilt from their stage folders the first time their board is opened. Board updates are reporting only: an error there is logged and never fails a build. Tables: `board_cards` and `board_events`.
+
+### Live activity
+
+While a run is in progress, the status page shows what each running agent is doing, in plain words, such as "Writing test/bookings.test.js, then running the tests" or "Test run: 6 passing, 7 failing". It also shows each agent's elapsed time and a one-line description of its job. The lines come from the agents' tool calls and the verify gate's steps (`pipeline/pipeline.activity.ts`). They are kept in memory only, since every action is also in `transcript.jsonl`.
+
+## Librarian
+
+Agents share a **librarian**, an in-process MCP server (`packages/factory/src/librarian/`). It gives them four kinds of knowledge, so they guess less and repeat fewer mistakes from earlier runs:
+
+| Tools | Knows | Stages |
+|---|---|---|
+| `spec_get`, `spec_trace` | This run's PRD, test plan and architecture by id (F-03, AC-F03-02, S-02, BRL-01, TC-7, an endpoint's operationId), and what each item links to, with task board status | development, fix, review, test triage |
+| `lessons_search` | Problems earlier runs hit, their root causes and the fixes that made verify pass | architecture, development, fix, test triage, deployment repair |
+| `docs_search`, `docs_read` | Version-pinned framework docs: antd@6, react-router@6, vite@6, vitest@3, better-sqlite3@11, node:test@22 | architecture, UI/UX design, development, fix, review |
+| `catalog_search`, `catalog_get` | Reviewed modules from earlier green apps; `catalog_get` copies one into the workspace and never overwrites files | architecture, development |
+
+- **Lessons cost no extra agent call.** Fix, test triage and deployment repair agents add `lessons` to the output they already return. The factory stores a lesson only after a later verify (or review) shows that check now passes. Lessons whose check still fails are dropped. A lesson seen again in another run is counted, not duplicated. The development agent's first build gets the 5 most frequent lessons for its design system in its prompt.
+- **Lessons hold engineering knowledge only.** They are shared with every future run, so the schema asks for general wording, and lessons that quote five or more consecutive words of the user's prompt are skipped. Set `LIBRARIAN_LESSONS=off` to stop storing new ones.
+- **Docs** are fetched at pinned refs with `bun packages/factory/scripts/librarian-sync-docs.ts`, committed under `packages/factory/librarian/docs/` (sources and licences in `SOURCES.md`), and split into sections small enough to return whole. The index rebuilds on startup only when the files change.
+- **The catalog only contains reviewed code.** `bun packages/factory/scripts/librarian-promote.ts <runId> <name> <path>…` copies files from a fully `deployed` run into `packages/factory/librarian/catalog/<name>/` as a draft. Drafts (`Status: draft` in the README) are not indexed until someone makes the code generic, writes the README and removes that line.
+- **Cost guardrails.** Every call is one more agent turn, so results are capped at 3,000 characters and each step has a call limit (20 for development, 8 for the others). The system prompt tells agents to use the librarian only when unsure and to batch lookups. Each stage's tool list is fixed, which keeps the prompt cache warm. Lookups themselves take under a millisecond (SQLite FTS5).
+- **Measuring it.** Every query is logged in `library_queries`, and `SUMMARY.md` shows queries and hits per stage. Set `LIBRARIAN=off` to run the same prompts without it and compare fix rounds and cost.
+
+Tables: `library_lessons`, `library_docs`, `library_catalog` (each with an FTS5 index), `library_index_meta`, `library_queries`.
 
 ## Budget and early stop
 

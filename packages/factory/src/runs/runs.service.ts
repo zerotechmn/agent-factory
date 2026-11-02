@@ -1,6 +1,7 @@
 import * as BoardService from "../board/board.service";
 import { config } from "../lib/config";
 import { NotFoundError, TooManyRequestsError, ValidationError } from "../lib/errors";
+import { recentActivity } from "../pipeline/pipeline.activity";
 import { readStageReport, runPaths } from "../pipeline/pipeline.artifacts";
 import { executeRun } from "../pipeline/pipeline.service";
 import { createRunSchema, runIdSchema } from "./runs.dto";
@@ -36,6 +37,7 @@ export function getRunDetail(id: string) {
   const run = findRun(id);
   const queuePosition = run.status === "queued" ? RunsStore.queuePosition(run.id) : null;
   return {
+    activity: recentActivity(run.id),
     appUrl: run.appUrl,
     budgetUsd: run.budgetUsd,
     costUsd: run.costUsd,

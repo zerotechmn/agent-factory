@@ -10,6 +10,10 @@ const envSchema = z.object({
   /** When set, overrides every stage's model (e.g. a cheap model for smoke-testing the pipeline). */
   // Compose passes an unset variable through as "", which must mean "no override".
   FACTORY_MODEL: z.preprocess((value) => (value === "" ? undefined : value), z.string().optional()),
+  /** "off" gives agents no librarian tools at all, for comparing runs with and without it. */
+  LIBRARIAN: z.enum(["on", "off"]).default("on"),
+  /** "off" stops storing new lessons; existing ones are still searchable. */
+  LIBRARIAN_LESSONS: z.enum(["on", "off"]).default("on"),
   MAX_CONCURRENT_RUNS: z.coerce.number().int().positive().default(1),
   PORT: z.coerce.number().int().positive().default(4000),
   /** Host port Traefik is published on; included in app URLs when it isn't 80. */

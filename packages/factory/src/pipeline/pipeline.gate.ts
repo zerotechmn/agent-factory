@@ -44,6 +44,7 @@ export async function runGate({
   appPort,
   commands,
   mode,
+  onStep = () => {},
   paths,
   runId,
   smokeChecks,
@@ -55,6 +56,8 @@ export async function runGate({
   appPort: number;
   commands: Commands | null;
   mode: GateMode;
+  /** Plain-language progress for the live activity feed. */
+  onStep?: (text: string) => void;
   paths: RunPaths;
   runId: string;
   smokeChecks: SmokeCheck[];
@@ -72,6 +75,7 @@ export async function runGate({
   // know about every broken part, not just the first one.
   let tests: GateResult["tests"] = null;
   if (mode === "full") {
+    onStep("Installing dependencies and running the test suite");
     tests = await runTests({ commands, logPath: join(stagePaths.dir, "tests.log"), workspace: paths.workspace });
     if (!tests.ok) {
       failedSteps.push("tests");
@@ -79,6 +83,8 @@ export async function runGate({
     }
   }
 
+  if (tests) onStep(tests.ok ? "Test suite passed" : "Test suite failed");
+  onStep("Building the app image and starting it");
   const container = await deployContainer({ appPort, runId, stageDir: stagePaths.dir });
   if (container.failedStep) {
     failedSteps.push(container.failedStep);
@@ -86,6 +92,7 @@ export async function runGate({
   }
 
   const smoke: SmokeResult[] = [];
+  onStep(container.ok ? "App is up and answering /health" : `App container failed at: ${container.failedStep}`);
   if (container.ok) {
     // Only GETs are checkable without request bodies; other methods are covered by the test suite.
     for (const check of smokeChecks.filter((c) => c.method === "GET")) {
@@ -103,6 +110,7 @@ export async function runGate({
   // run gt29eh7rws (header words split mid-letter on every screen).
   let ui: UiCheckResult | null = null;
   if (container.ok) {
+    onStep(`Opening ${uiScreens.length} screens in a browser`);
     ui = await runUiCheck({
       baseUrl: uiBaseUrl ?? `http://factory-app-${runId}:${appPort}`,
       checkMobile: uiCheckMobile,

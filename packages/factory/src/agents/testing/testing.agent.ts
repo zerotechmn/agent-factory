@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { lessonsField } from "../../librarian/librarian.schema";
 import { CODE_TOOLS, jsonBlock, type AgentDefinition } from "../agents.shared";
 
 const schema = z.object({
@@ -13,6 +14,7 @@ const schema = z.object({
     )
     .describe("Failures caused by application code, for the developer to fix"),
   commandsRun: z.array(z.string()),
+  lessons: lessonsField.describe("Reusable lessons about broken TESTS you fixed (step \"tests\"): runner config, flaky timing, test isolation. Engineering knowledge only, never the product or its data. Empty if none."),
   passed: z.boolean().describe("True only if the full test suite now passes"),
   testsFixed: z.array(z.string()).describe("Test files you corrected, and why"),
 });

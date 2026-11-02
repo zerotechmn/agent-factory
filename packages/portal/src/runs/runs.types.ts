@@ -16,7 +16,11 @@ export type Stage = {
   status: StageStatus;
 };
 
+export type Activity = { at: string; stage: string; text: string };
+
 export type Run = {
+  /** Latest agent actions, newest first; only while the run is in progress. */
+  activity: Activity[];
   appUrl: string | null;
   budgetUsd: number;
   costUsd: number;

@@ -118,6 +118,39 @@ export function featureColumnFromTests(tests: Pick<BoardCard, "column">[]): Boar
   return null;
 }
 
+/** Any test in progress → in progress; every test passing locally → built. */
+export function featureColumnWhileBuilding(tests: Pick<BoardCard, "column">[]): BoardColumn | null {
+  if (tests.length === 0) return null;
+  if (tests.some((t) => t.column === "doing")) return "doing";
+  if (tests.every((t) => t.column === "built" || t.column === "verified")) return "built";
+  return null;
+}
+
+/**
+ * Totals from a test run's summary, for when output is cut down to counts
+ * (agents often pipe through grep or tail). Covers TAP/node --test, bun,
+ * jest/vitest, mocha and pytest; null when the text isn't a test summary.
+ */
+export function parseTestCounts(output: string): { failed: number; passed: number } | null {
+  const num = (re: RegExp) => {
+    const m = re.exec(output);
+    return m ? Number(m[1]) : null;
+  };
+  const passed =
+    num(/^# pass (\d+)/m) ?? num(/^\s*(\d+) pass$/m) ?? num(/^\s*Tests?:?\s+.*?(\d+) passed/m) ?? num(/(\d+) passing\b/) ?? num(/^=+ .*?(\d+) passed/m);
+  const failed =
+    num(/^# fail (\d+)/m) ?? num(/^\s*(\d+) fail$/m) ?? num(/^\s*Tests?:?\s+.*?(\d+) failed/m) ?? num(/(\d+) failing\b/) ?? num(/^=+ .*?(\d+) failed/m);
+  if (passed === null && failed === null) return null;
+  return { failed: failed ?? 0, passed: passed ?? 0 };
+}
+
+/** A tool result's text, whether the SDK gives it as a string or as content blocks. */
+export function toolResultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((part) => (part && typeof part === "object" && "text" in part ? String(part.text) : "")).join("\n");
+}
+
 function unique<T>(values: T[]): T[] {
   return [...new Set(values)];
 }

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { BOARD_SERVER, BOARD_TOOL_NAMES, boardMcpServer } from "../../board/board.tools";
+import { lessonsField } from "../../librarian/librarian.schema";
+import { formatLessons } from "../../librarian/librarian.service";
 import { CODE_TOOLS, jsonBlock, type AgentDefinition, type StageContext } from "../agents.shared";
 import { DEVELOPMENT_TOOL_NAMES, developmentMcpServer } from "./development.tools";
 
@@ -9,6 +10,7 @@ const schema = z.object({
   commands: z.object({ install: z.string(), start: z.string(), test: z.string() }),
   filesChanged: z.array(z.string()),
   knownGaps: z.array(z.string()).describe("Anything not implemented or not working"),
+  lessons: lessonsField,
   screens: z
     .array(
       z.object({
@@ -25,13 +27,10 @@ const schema = z.object({
 });
 
 export const developmentAgent: AgentDefinition<typeof schema> = {
-  allowedTools: [...CODE_TOOLS, ...DEVELOPMENT_TOOL_NAMES, ...BOARD_TOOL_NAMES],
+  allowedTools: [...CODE_TOOLS, ...DEVELOPMENT_TOOL_NAMES],
   buildPrompt: (ctx) => (ctx.fix ? fixPrompt(ctx) : buildPrompt(ctx)),
   cwd: (ctx) => ctx.workspaceDir,
-  mcpServers: (ctx) => ({
-    browser: developmentMcpServer(ctx.stageDir, ctx.checkMobile),
-    [BOARD_SERVER]: boardMcpServer({ actor: ctx.stageLabel, runId: ctx.runId }),
-  }),
+  mcpServers: (ctx) => ({ browser: developmentMcpServer(ctx.stageDir, ctx.checkMobile) }),
   role: "Developer",
   runtime: "code",
   schema,
@@ -57,12 +56,12 @@ Work in this order:
 6. Make every PRD screen reachable by URL (a route or hash route, e.g. /#/items/1 using a seeded id) and report the map in screens. After you finish, the factory opens each screen in a real browser at ${ctx.checkMobile ? "desktop and phone width" : "desktop width (this design is desktop-first)"} and fails the build on broken or overflowing text, sideways scrolling, broken images, JS errors and serious accessibility violations. The browser_check tool runs exactly those checks against your local server, so use it instead of guessing. Never install Playwright, Puppeteer or browsers yourself: a browser is already provided through that tool, and installs are slow and fail here.
 7. Write a short README.md (what it is, how to run, how to test).
 
-Task board: people watch your progress on a board. Name every automated test after its test case id (e.g. "TC-3: rejects an end date before the start"), and make the test command print one line per test with its result (e.g. node --test's default output, or a verbose/spec reporter): the board moves test cards from your code and from that output. Move feature (F-xx) and screen (S-xx) cards yourself with the update_tasks tool: "doing" when you start one, "built" when it works locally. Batch several ids per call and send it in the same turn as another tool call.
+Name every automated test after its test case id, e.g. "TC-3: rejects an end date before the start".
 
 After you finish, the factory itself re-runs your install and test commands, builds the Dockerfile and checks /health, so those commands must work from a clean checkout.
 
 Do not commit node_modules, virtualenvs or build output; add a .gitignore and a .dockerignore.
-
+${pastLessons(ctx)}
 ${jsonBlock("PRD", ctx.handoffs.requirements)}
 
 ${jsonBlock("Test plan", ctx.handoffs.testCases)}
@@ -80,7 +79,7 @@ Follow the factory:systematic-debugging skill: find each root cause before chang
 
 Fix every blocker/major review finding and every app bug. Ignore minor findings unless they are one-line fixes.
 
-Mark each feature (F-xx) or screen (S-xx) you rework on the task board with the update_tasks tool ("doing", then "built"), sent in the same turn as another tool call.
+In lessons, record each distinct problem above that you fixed, as general engineering knowledge future apps can reuse.
 
 ${jsonBlock("Verify gate (automated checks run by the factory)", summarizeGate(fix?.gate ?? null))}
 
@@ -91,6 +90,18 @@ ${jsonBlock("Review findings", fix?.review ?? null)}${
       ? ""
       : `\n\n${jsonBlock("PRD", ctx.handoffs.requirements)}\n\n${jsonBlock("Architecture", ctx.handoffs.architecture)}`
   }`;
+}
+
+/**
+ * The traps earlier runs hit most often, in the prompt itself: they are the
+ * ones most likely to recur, and seeing them costs no tool call.
+ */
+function pastLessons(ctx: StageContext): string {
+  if (ctx.lessons.length === 0) return "";
+  return `
+Problems earlier factory runs hit most often with this design system, and the fixes that passed verify. Avoid them from the start:
+${formatLessons(ctx.lessons)}
+`;
 }
 
 function summarizeGate(gate: StageContext["gate"]) {

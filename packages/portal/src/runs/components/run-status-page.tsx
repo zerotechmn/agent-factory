@@ -1,10 +1,18 @@
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
 
-import { BOARD_COLUMNS, PLANNED_STAGES, REDIRECT_DELAY_MS, RUN_STATUS_LABELS, STAGE_STATUS_ICONS, TERMINAL_STATUSES } from "../runs.constants";
+import {
+  BOARD_COLUMNS,
+  PLANNED_STAGES,
+  REDIRECT_DELAY_MS,
+  RUN_STATUS_LABELS,
+  STAGE_DESCRIPTIONS,
+  STAGE_STATUS_ICONS,
+  TERMINAL_STATUSES,
+} from "../runs.constants";
 import { useBoard, useRun } from "../runs.hooks";
-import type { Run, Stage } from "../runs.types";
-import { formatUsd, percentOf } from "../runs.utils";
+import type { Activity, Run, Stage } from "../runs.types";
+import { clockTime, formatUsd, percentOf } from "../runs.utils";
 
 export function RunStatusPage({ id }: { id: string }) {
   const { data: run, error, isLoading } = useRun(id);
@@ -122,34 +130,74 @@ function StageList({ run }: { run: Run }) {
   // Show executed stages, then the not-yet-started part of the planned sequence.
   const started = new Set(run.stages.map((stage) => stage.label));
   const done = run.status !== "queued" && run.status !== "running";
-  const pending = done ? [] : PLANNED_STAGES.filter((label) => !started.has(label));
+  const pending = done ? [] : PLANNED_STAGES.filter((stage) => !started.has(stage.label));
+  const now = Date.now();
 
   return (
     <ol className="mt-8 divide-y divide-stone-200 rounded-lg border border-stone-200 bg-white">
-      {run.stages.map((stage) => <StageRow key={stage.seq} stage={stage} />)}
-      {pending.map((label) => (
-        <li key={label} className="flex items-center gap-3 px-4 py-3 text-stone-400">
+      {run.stages.map((stage) => (
+        <StageRow
+          key={stage.seq}
+          activity={run.activity.filter((a) => a.stage === stage.label)}
+          now={now}
+          stage={stage}
+        />
+      ))}
+      {pending.map((stage) => (
+        <li key={stage.key} className="flex gap-3 px-4 py-3 text-stone-400">
           <span className="w-4 text-center">·</span>
-          <span>{label}</span>
+          <span>
+            <span className="block">{stage.label}</span>
+            <span className="block text-xs">{STAGE_DESCRIPTIONS[stage.key]}</span>
+          </span>
         </li>
       ))}
     </ol>
   );
 }
 
-function StageRow({ stage }: { stage: Stage }) {
-  const tone =
-    stage.status === "succeeded" ? "text-emerald-700" : stage.status === "running" ? "text-stone-900" : "text-red-700";
+function StageRow({ activity, now, stage }: { activity: Activity[]; now: number; stage: Stage }) {
+  const running = stage.status === "running";
+  const tone = stage.status === "succeeded" ? "text-emerald-700" : running ? "text-stone-900" : "text-red-700";
   return (
-    <li className="px-4 py-3">
-      <div className="flex items-center gap-3">
-        <span className={`w-4 text-center ${tone} ${stage.status === "running" ? "animate-pulse" : ""}`}>
-          {STAGE_STATUS_ICONS[stage.status]}
+    <li className={`px-4 py-3 ${running ? "bg-sky-50/60" : ""}`}>
+      <div className="flex items-start gap-3">
+        <span className={`w-4 text-center ${tone} ${running ? "animate-pulse" : ""}`}>{STAGE_STATUS_ICONS[stage.status]}</span>
+        <span className="min-w-0 flex-1">
+          <span className="block">{stage.label}</span>
+          <span className="block text-xs text-stone-500">{STAGE_DESCRIPTIONS[stage.stageKey]}</span>
         </span>
-        <span className="flex-1">{stage.label}</span>
-        <span className="text-sm tabular-nums text-stone-500">{formatUsd(stage.costUsd)}</span>
+        <span className="text-right text-sm tabular-nums text-stone-500">
+          {formatUsd(stage.costUsd)}
+          <span className="block text-xs">{elapsed(stage.startedAt, stage.finishedAt ? Date.parse(stage.finishedAt) : now)}</span>
+        </span>
       </div>
+      {running && <ActivityLines activity={activity} />}
       {stage.error && <p className="mt-1 pl-7 text-sm text-red-700 line-clamp-2">{stage.error}</p>}
     </li>
   );
+}
+
+/** The running agent's latest actions, newest first, read live from what it does. */
+function ActivityLines({ activity }: { activity: Activity[] }) {
+  if (!activity.length) return <p className="mt-1 pl-7 text-sm text-stone-500">Thinking…</p>;
+  const [latest, ...earlier] = activity;
+  return (
+    <div className="mt-1 pl-7">
+      <p className="truncate text-sm text-sky-900" aria-live="polite">{latest!.text}</p>
+      <ul className="mt-0.5 space-y-0.5">
+        {earlier.slice(0, 4).map((a) => (
+          <li key={`${a.at}-${a.text}`} className="truncate text-xs text-stone-500">
+            {clockTime(a.at)} · {a.text}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function elapsed(startedAt: string, until: number): string {
+  const seconds = Math.max(Math.round((until - Date.parse(startedAt)) / 1_000), 0);
+  if (!Number.isFinite(seconds)) return "";
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
 }
