@@ -1,3 +1,6 @@
+import { PLANNED_STAGES, TERMINAL_STATUSES } from "./runs.constants";
+import type { Run, Stage } from "./runs.types";
+
 export function formatUsd(value: number): string {
   return `$${Number(value ?? 0).toFixed(2)}`;
 }
@@ -19,39 +22,25 @@ export function clockTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-// Builds started from this browser, newest first. Only this browser's: the
-// portal has no login, so a shared list would show everyone's prompts.
-const RECENT_KEY = "factory:recent-builds";
-const RECENT_LIMIT = 20;
-
-export type RecentBuild = { createdAt: string; id: string; prompt: string };
-
-export function readRecentBuilds(): RecentBuild[] {
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(RECENT_KEY) ?? "[]") as unknown;
-    return Array.isArray(parsed) ? parsed.filter((b): b is RecentBuild => typeof b?.id === "string").slice(0, RECENT_LIMIT) : [];
-  } catch {
-    return [];
-  }
+export function formatDuration(startedAt: string, until: number): string {
+  const seconds = Math.max(Math.round((until - Date.parse(startedAt)) / 1_000), 0);
+  if (!Number.isFinite(seconds)) return "";
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
 }
 
-export function rememberRecentBuild(build: RecentBuild): void {
-  writeRecentBuilds([build, ...readRecentBuilds().filter((b) => b.id !== build.id)]);
+/** The built app is reachable: deployed, with an address. */
+export function isLive(run: Run): boolean {
+  return Boolean(run.appUrl) && (run.status === "deployed" || run.status === "deployed_partial");
 }
 
-export function forgetRecentBuild(id: string): void {
-  writeRecentBuilds(readRecentBuilds().filter((b) => b.id !== id));
-}
+export type PipelineStep = { key: string; label: string; stage: Stage | null; stageKey: string };
 
-/** A run id from a pasted id or link (…/runs/abc123defg/…), or null. */
-export function runIdFrom(text: string): string | null {
-  return text.trim().match(/(?:runs\/)?([a-z0-9]{10})(?:[/?#]|$)/)?.[1] ?? null;
-}
-
-function writeRecentBuilds(builds: RecentBuild[]): void {
-  try {
-    window.localStorage.setItem(RECENT_KEY, JSON.stringify(builds.slice(0, RECENT_LIMIT)));
-  } catch {
-    // Storage can be unavailable (private window, blocked site data); the list is a convenience only.
-  }
+/** Executed stages, then the not-yet-started part of the planned sequence (none once the run has ended). */
+export function buildPipeline(run: Run): PipelineStep[] {
+  const started = new Set(run.stages.map((stage) => stage.label));
+  const pending = TERMINAL_STATUSES.includes(run.status) ? [] : PLANNED_STAGES.filter((stage) => !started.has(stage.label));
+  return [
+    ...run.stages.map((stage) => ({ key: `stage-${stage.seq}`, label: stage.label, stage, stageKey: stage.stageKey })),
+    ...pending.map((stage) => ({ key: `planned-${stage.key}`, label: stage.label, stage: null, stageKey: stage.key })),
+  ];
 }

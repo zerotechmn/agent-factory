@@ -1,5 +1,6 @@
 import { Elysia } from "elysia";
 
+import * as ChatController from "../chat/chat.controller";
 import * as RunsController from "./runs.controller";
 
 export const runsRoutes = new Elysia({ prefix: "/api/runs" })
@@ -18,7 +19,15 @@ export const runsRoutes = new Elysia({ prefix: "/api/runs" })
   .post("/:id/feedback", ({ body, params, request, server }) =>
     RunsController.submitFeedback({ body, id: params.id, ip: clientIp(request, server?.requestIP(request)?.address) }),
   )
-  .get("/:id/stages/:dirName/report", ({ params }) => RunsController.getStageReport(params.id, params.dirName));
+  .get("/:id/stages/:dirName/report", ({ params }) => RunsController.getStageReport(params.id, params.dirName))
+  .post("/:id/chat", ({ body, params, request, server }) =>
+    ChatController.streamAnswer({
+      body,
+      id: params.id,
+      ip: clientIp(request, server?.requestIP(request)?.address),
+      signal: request.signal,
+    }),
+  );
 
 function clientIp(request: Request, fallback: string | undefined): string {
   // Traefik sets X-Forwarded-For; the left-most entry is the original client.

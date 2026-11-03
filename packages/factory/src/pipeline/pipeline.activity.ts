@@ -5,12 +5,16 @@ import { parseTestCounts, parseTestLog, toolResultText } from "../board/board.ut
 
 export type Activity = {
   at: string;
+  /** action: one plain line per tool call. message: the agent's own words (Markdown) between calls. */
+  kind: "action" | "message";
   /** Stage label, e.g. "Development", "Fix 1". */
   stage: string;
   text: string;
 };
 
 const KEEP_PER_RUN = 60;
+/** The feed is polled every 2 s; a long closing summary is cut, the full text is in the transcript. */
+const MESSAGE_MAX_CHARS = 1_500;
 
 // In memory only: the feed is for people watching a run live. A restart
 // fails in-flight runs anyway, and every action is in transcript.jsonl.
@@ -20,9 +24,10 @@ export function recentActivity(runId: string): Activity[] {
   return [...(feeds.get(runId) ?? [])].reverse();
 }
 
-export function recordActivity(runId: string, stage: string, text: string): void {
-  const feed = feeds.get(runId) ?? [];
-  feed.push({ at: new Date().toISOString(), stage, text });
+export function recordActivity(runId: string, stage: string, text: string, kind: Activity["kind"] = "action"): void {
+  // Only a stage's latest message is shown, so older ones are dropped rather than polled.
+  const feed = (feeds.get(runId) ?? []).filter((a) => kind === "action" || a.kind === "action" || a.stage !== stage);
+  feed.push({ at: new Date().toISOString(), kind, stage, text });
   if (feed.length > KEEP_PER_RUN) feed.splice(0, feed.length - KEEP_PER_RUN);
   feeds.set(runId, feed);
 }
@@ -49,6 +54,7 @@ export function activityObserver({
   return (message) => {
     if (message.type === "assistant") {
       for (const block of message.message.content) {
+        if (block.type === "text" && block.text.trim()) recordActivity(runId, stage, clip(block.text.trim()), "message");
         if (block.type !== "tool_use") continue;
         if (block.name === "Bash") bashCalls.add(block.id);
         const text = describeToolUse(block.name, block.input, cwd);
@@ -149,6 +155,10 @@ export function describeCommand(command: string, description: string): string {
   }
   const text = parts.join(", then ");
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function clip(text: string): string {
+  return text.length > MESSAGE_MAX_CHARS ? `${text.slice(0, MESSAGE_MAX_CHARS).trimEnd()}…` : text;
 }
 
 function currentTodo(todos: unknown): string | null {

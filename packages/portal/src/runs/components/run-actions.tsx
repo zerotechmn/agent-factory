@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
 
+import { Alert, Button } from "../../design-system";
+import { forgetRun } from "../recent-runs";
 import { TERMINAL_STATUSES } from "../runs.constants";
 import { useCancelRun, useDeleteRun } from "../runs.hooks";
 import type { Run } from "../runs.types";
-import { forgetRecentBuild } from "../runs.utils";
 
 /** Cancel while a build is active, delete once it has finished; both confirm inline first. */
 export function RunActions({ run }: { run: Run }) {
@@ -20,7 +21,7 @@ export function RunActions({ run }: { run: Run }) {
     if (finished) {
       remove.mutate(undefined, {
         onSuccess: () => {
-          forgetRecentBuild(run.id);
+          forgetRun(run.id);
           navigate("/");
         },
       });
@@ -30,35 +31,28 @@ export function RunActions({ run }: { run: Run }) {
   };
 
   return (
-    <div className="mt-8 border-t border-stone-200 pt-4 text-sm">
+    <div className="border-t border-border pt-4 text-sm">
       {!confirming ? (
-        <button type="button" onClick={() => setConfirming(true)} className="text-stone-600 underline underline-offset-4 hover:text-red-700">
+        <Button variant="link" size="sm" className="text-ds-fg-sec hover:text-ds-error" onClick={() => setConfirming(true)}>
           {finished ? "Delete this build" : "Cancel this build"}
-        </button>
+        </Button>
       ) : (
         <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Confirm">
-          <span className="text-stone-800">
-            {finished
-              ? "Delete the app, its data and every report? This can't be undone."
-              : "Cancel this build? It stops now and can't be resumed."}
+          <span className="text-ds-fg">
+            {finished ? "Delete the app, its data and every report? This can't be undone." : "Cancel this build? It stops now and can't be resumed."}
           </span>
-          <button
-            type="button"
-            onClick={confirm}
-            disabled={pending}
-            className="rounded-md bg-red-700 px-3 py-1.5 font-medium text-white disabled:opacity-40"
-          >
+          <Button variant="destructive" size="sm" onClick={confirm} loading={pending}>
             {pending ? (finished ? "Deleting…" : "Cancelling…") : finished ? "Delete" : "Cancel build"}
-          </button>
-          <button type="button" onClick={() => setConfirming(false)} disabled={pending} className="rounded-md border border-stone-300 px-3 py-1.5">
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setConfirming(false)} disabled={pending}>
             Keep it
-          </button>
+          </Button>
         </div>
       )}
       {error && (
-        <p role="alert" className="mt-2 rounded-md bg-red-50 p-2 text-red-700">
+        <Alert tone="error" className="mt-2">
           {error instanceof Error ? error.message : "That didn't work"}
-        </p>
+        </Alert>
       )}
     </div>
   );

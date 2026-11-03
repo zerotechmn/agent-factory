@@ -1,8 +1,10 @@
 import { useState, type FormEvent } from "react";
 
+import { Alert, Button, Textarea } from "../../design-system";
 import { useSubmitFeedback } from "../runs.hooks";
 import type { Revision } from "../runs.types";
 import { formatUsd } from "../runs.utils";
+import { CARD_CLASS } from "./run-card";
 
 const REVISION_STATUS_LABELS: Record<Revision["status"], string> = {
   deployed: "Live",
@@ -25,51 +27,46 @@ export function RunFeedback({ canSubmit, revisions, runId }: { canSubmit: boolea
   };
 
   return (
-    <section className="mt-6 rounded-lg border border-stone-200 bg-white p-4" aria-labelledby="feedback-title">
-      <h2 id="feedback-title" className="font-medium text-stone-900">
+    <section className={`${CARD_CLASS} p-5`} aria-labelledby="feedback-title">
+      <h2 id="feedback-title" className="text-ds-fg">
         Feedback on your app
       </h2>
       {canSubmit && (
         <form onSubmit={send} className="mt-2 space-y-2">
-          <p className="text-sm text-stone-600">
+          <p className="text-sm text-ds-fg-sec">
             Describe what to change or add. The factory updates this app at the same address, from its existing spec and code; the current
             version stays live until the new one passes its checks.
           </p>
-          <textarea
+          <Textarea
             value={feedback}
-            onChange={(event) => setFeedback(event.target.value)}
+            onValueChange={setFeedback}
             rows={3}
             maxLength={2_000}
             aria-label="Feedback"
             placeholder="e.g. Add a search box to the list, and show prices with a currency sign"
-            className="w-full resize-y rounded-md border border-stone-300 p-2 text-sm outline-none focus:border-stone-500 focus:ring-2 focus:ring-stone-200"
+            fieldSize="sm"
+            className="min-h-0 resize-y"
           />
-          <button
-            type="submit"
-            disabled={feedback.trim().length < 10 || submit.isPending}
-            className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
-          >
+          <Button type="submit" size="sm" disabled={feedback.trim().length < 10} loading={submit.isPending}>
             {submit.isPending ? "Sending…" : "Update the app"}
-          </button>
+          </Button>
           {submit.error && (
-            <p role="alert" className="rounded-md bg-red-50 p-2 text-sm text-red-700">
-              {submit.error instanceof Error ? submit.error.message : "Could not send your feedback"}
-            </p>
+            <Alert tone="error">{submit.error instanceof Error ? submit.error.message : "Could not send your feedback"}</Alert>
           )}
         </form>
       )}
       {revisions.length > 0 && (
-        <ol className="mt-4 divide-y divide-stone-200 rounded-md border border-stone-200">
+        <ol className="mt-4 divide-y divide-ds-line rounded-[var(--ds-radius-xs)] border border-ds-line">
           {revisions.map((r) => (
             <li key={r.n} className="px-3 py-2 text-sm">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <span className="font-medium text-stone-900">Round {r.n}</span>
-                <span className="text-stone-600">
+                <span className="text-ds-fg">Round {r.n}</span>
+                <span className="text-ds-fg-sec">
                   {REVISION_STATUS_LABELS[r.status]} · {formatUsd(r.costUsd)}
                 </span>
               </div>
-              <p className="mt-0.5 line-clamp-2 text-stone-700">{r.feedback}</p>
-              {r.note && <p className="mt-0.5 text-xs text-stone-500">{r.note}</p>}
+              <p className="mt-0.5 line-clamp-2 text-ds-fg">{r.feedback}</p>
+              {r.note && <p className="mt-0.5 text-xs text-ds-fg-sec">{r.note}</p>}
             </li>
           ))}
         </ol>

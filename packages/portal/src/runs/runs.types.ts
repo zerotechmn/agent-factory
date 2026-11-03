@@ -45,7 +45,8 @@ export type Stage = {
   status: StageStatus;
 };
 
-export type Activity = { at: string; stage: string; text: string };
+/** action: a plain line per tool call. message: the agent's latest words, Markdown, one per stage. */
+export type Activity = { at: string; kind: "action" | "message"; stage: string; text: string };
 
 export type Run = {
   /** Latest agent actions, newest first; only while the run is in progress. */

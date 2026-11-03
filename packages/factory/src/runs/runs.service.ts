@@ -2,6 +2,7 @@ import { rm } from "node:fs/promises";
 
 import * as BoardService from "../board/board.service";
 import * as BoardStore from "../board/board.store";
+import * as ChatStore from "../chat/chat.store";
 import { config } from "../lib/config";
 import { db } from "../lib/db";
 import { ConflictError, NotFoundError, TooManyRequestsError, ValidationError } from "../lib/errors";
@@ -162,6 +163,7 @@ export async function deleteRun(id: string) {
 export function deleteRunRecords(runId: string): void {
   db.transaction(() => {
     BoardStore.deleteRun(runId);
+    ChatStore.deleteRun(runId);
     QuestionsStore.deleteRun(runId);
     RevisionsStore.deleteRun(runId);
     LibrarianStore.deleteRunQueries(runId);
@@ -216,11 +218,16 @@ function checkLimits({ budgetUsd, ip, skipIpLimit }: { budgetUsd: number; ip: st
   if (!skipIpLimit && RunsStore.countRunsByIpSince(ip, since) >= config.RUNS_PER_IP_PER_DAY) {
     throw new TooManyRequestsError(`Limit of ${config.RUNS_PER_IP_PER_DAY} builds per day reached. Try again tomorrow.`);
   }
-  // Each queued run may still spend a full budget, so count it against the cap up front.
-  const committed = RunsStore.spendSinceUsd(since) + RunsStore.countRunning() * config.RUN_BUDGET_USD;
-  if (committed + budgetUsd > config.DAILY_SPEND_CAP_USD) {
+  if (committedSpendTodayUsd() + budgetUsd > config.DAILY_SPEND_CAP_USD) {
     throw new TooManyRequestsError("The factory has reached today's spending limit. Try again tomorrow.");
   }
+}
+
+/** Today's spend plus what running builds may still spend; the daily cap applies to this. */
+export function committedSpendTodayUsd(): number {
+  const since = startOfUtcDay();
+  // Each running run may still spend a full budget, so count it against the cap up front.
+  return RunsStore.spendSinceUsd(since) + ChatStore.spendSinceUsd(since) + RunsStore.countRunning() * config.RUN_BUDGET_USD;
 }
 
 function findRun(id: string) {
@@ -237,7 +244,7 @@ function newRunId(): string {
   return Array.from(bytes, (b, i) => (i === 0 ? alphabet[b % 24] : alphabet[b % alphabet.length])).join("");
 }
 
-function startOfUtcDay(): string {
+export function startOfUtcDay(): string {
   const now = new Date();
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
 }

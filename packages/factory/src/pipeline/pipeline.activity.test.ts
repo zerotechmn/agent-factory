@@ -78,4 +78,20 @@ describe("live progress from the developer's stream", () => {
 
     expect(recentActivity(runId).map((a) => a.text)).toEqual(["Test run: 1 passing", "Running the tests", "Writing test/api.test.js"]);
   });
+
+  test("keeps only the latest thing each agent said, next to its actions", () => {
+    const id = "obsrvtest2";
+    const activity = activityObserver({ cwd: "/ws", runId: id, stage: "Development" });
+    const other = activityObserver({ cwd: "/ws", runId: id, stage: "Fix 1" });
+    activity(assistant([{ text: "I'll start with the **routes**.", type: "text" }, { id: "r1", input: { file_path: "/ws/a.ts" }, name: "Read", type: "tool_use" }]));
+    other(assistant([{ text: "Looking at the failing test.", type: "text" }]));
+    activity(assistant([{ text: "  ", type: "text" }, { text: "Now the `tests`.", type: "text" }]));
+    activity(assistant([{ text: "x".repeat(2_000), type: "text" }]));
+
+    const feed = recentActivity(id);
+    expect(feed.filter((a) => a.kind === "action").map((a) => a.text)).toEqual(["Reading a.ts"]);
+    const messages = feed.filter((a) => a.kind === "message");
+    expect(messages.map((a) => a.stage)).toEqual(["Development", "Fix 1"]);
+    expect(messages[0]!.text).toHaveLength(1_501);
+  });
 });

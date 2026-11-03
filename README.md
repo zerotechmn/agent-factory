@@ -148,7 +148,7 @@ Agents never wait for a person mid-session: an idle session's prompt cache expir
 
 - **Skipped when empty:** a checkpoint without questions doesn't pause.
 - **Answering:** the suggestion is preselected, so "Use the suggestions" or "Approve as is" is one click. "Other" and a free-text box take anything else. Answering continues the run at once.
-- **Only while someone is watching** (`CUSTOMER_WAIT_ONLY_IF_WATCHING=on`, the default): the build's status and task-board pages tell the factory they're open (they poll the run every 2 seconds with `?watch=1`; the front page's recent-builds list doesn't count). If nobody has the build open when questions come up, the run continues at once with the agents' choices. If you leave the page during a wait, it continues within a minute. A background tab counts as away, because browsers pause its polling.
+- **Only while someone is watching** (`CUSTOMER_WAIT_ONLY_IF_WATCHING=on`, the default): every tab of a build's page tells the factory it's open (it polls the run every 2 seconds with `?watch=1`; the sidebar's recent-runs list doesn't count). If nobody has the build open when questions come up, the run continues at once with the agents' choices. If you leave the page during a wait, it continues within a minute. A background tab counts as away, because browsers pause its polling.
 - **No answer:** after `CUSTOMER_TIMEOUT_MINUTES` (default 5) the run continues with the agents' choices. With the watching rule off, a timed-out first checkpoint also skips the second.
 - **Cost:** waiting costs no tokens. Resuming the requirements session after more than 5 minutes rewrites its small cache (about $0.05–0.10).
 - **Queue:** a waiting run keeps its run slot, so with `MAX_CONCURRENT_RUNS=1` the next run can wait behind it, at most about 10 minutes, and only while someone is answering.
@@ -309,6 +309,7 @@ bun packages/factory/scripts/benchmark.ts report next baseline-v1  # compare two
 - **$1.50 is reserved for the first fix round.** Spec, design, the first build and the first review can't spend it, so a run that spends heavily on its first build still fixes what verify finds instead of shipping it. Earlier runs stopped "before Fix 1" for exactly this reason. Fix rounds, test triage and re-reviews may use it; only deployment repair may use the deploy reserve. A feedback round holds a fifth of its smaller budget instead.
 - Spend comes from the SDK's `total_cost_usd`, which is an estimate and not a bill. It is logged for every agent call in `ledger.jsonl`, and verify entries show $0. The SDK checks the limit between turns, so a stage can go slightly over by up to one model turn.
 - There are also global limits: `DAILY_SPEND_CAP_USD` (which counts in-flight runs at full budget), `RUNS_PER_IP_PER_DAY` and `MAX_CONCURRENT_RUNS`.
+- The portal's **Ask** tab answers questions about a run with `CHAT_MODEL` (default `claude-opus-5-5`), reading the run's request, stages and reports. Its spend counts against `DAILY_SPEND_CAP_USD`, and `CHAT_MESSAGES_PER_IP_PER_DAY` (default 100) limits how much one visitor can ask.
 
 ## Inspecting a run
 
