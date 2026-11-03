@@ -68,6 +68,22 @@ describe("parallel stages", () => {
     expect(decideAllowance({ budget, access: "build", minUsd: 0.2, requestedUsd: 2 }).kind).toBe("stop");
   });
 
+  test("on a $10 run the acceptance tester only gets money when it claims before the developer", () => {
+    // The spec stages of a typical run cost about $1.05; the reserves hold $2.50.
+    const spent = recordSpend(createBudget({ capUsd: 10, deployReserveUsd: 1, fixReserveUsd: 1.5 }), { costUsd: 1.05 });
+    const claim = (budget: typeof spent, requestedUsd: number, minUsd: number) => {
+      const decision = decideAllowance({ access: "build", budget, minUsd, requestedUsd });
+      return { budget: decision.kind === "go" ? commitAllowance(budget, decision.allowanceUsd) : budget, decision };
+    };
+
+    const devFirst = claim(spent, 7, 1);
+    expect(claim(devFirst.budget, 0.6, 0.2).decision.kind).toBe("stop");
+
+    const testerFirst = claim(spent, 0.6, 0.2);
+    expect(testerFirst.decision).toEqual({ allowanceUsd: 0.6, kind: "go" });
+    expect(claim(testerFirst.budget, 7, 1).decision).toEqual({ allowanceUsd: 5.85, kind: "go" });
+  });
+
   test("finishing a stage books its real cost and frees the unused allowance", () => {
     let budget = commitAllowance(fresh(), 2);
     expect(availableUsd(budget)).toBe(13);

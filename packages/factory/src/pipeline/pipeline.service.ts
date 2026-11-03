@@ -327,8 +327,11 @@ class Pipeline {
     if (architecture.outcome !== "succeeded") return this.stop(architecture, "Architecture failed");
 
     // The independent tester writes black-box tests from the same contract
-    // while the developer builds, so it adds no waiting time.
-    const [dev] = await Promise.all([this.develop(), this.writeAcceptanceTests()]);
+    // while the developer builds, so it adds no waiting time. It starts first:
+    // allowances are claimed in call order, and the developer asks for more
+    // than a $10 run has left after the reserves, so started second the
+    // tester was refused in almost every run.
+    const [, dev] = await Promise.all([this.writeAcceptanceTests(), this.develop()]);
     this.devSessionId = dev.sessionId;
     if (!(await workspaceHasFile(this.paths, "Dockerfile"))) {
       return this.stop(dev, "Development produced no deployable app (no Dockerfile)");
@@ -974,9 +977,10 @@ class Pipeline {
     }
 
     const reviewedSince = await headCommit(this.paths);
-    const [dev] = await Promise.all([
-      this.step("development", { budgetUsd: REVISION_DEV_BUDGET_USD, suffix }),
+    // Tester first, so its allowance is claimed before the developer's (see execute).
+    const [, dev] = await Promise.all([
       this.writeAcceptanceTests(suffix),
+      this.step("development", { budgetUsd: REVISION_DEV_BUDGET_USD, suffix }),
     ]);
     this.devSessionId = dev.sessionId;
     if (dev.outcome === "not_started") return this.finishRevision({ deployed: false, note: this.stopReason ?? "No budget left for the change" });
