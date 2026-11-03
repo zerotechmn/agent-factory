@@ -57,6 +57,7 @@ const TABS = [
   { label: "Overview", path: "" },
   { label: "Task board", path: "/board" },
   { label: "Agent reports", path: "/details" },
+  { label: "Ask", path: "/chat" },
   { label: "Library", path: "/librarian" },
 ];
 

@@ -30,11 +30,15 @@ export function useBoard(id: string, { live }: { live: boolean }) {
   });
 }
 
-export function useStageReport(id: string, dirName: string | null) {
+/** Polls while the stage runs: its agent writes the report when it finishes. */
+export function useStageReport(id: string, dirName: string | null, { live }: { live: boolean }) {
   return useQuery({
     enabled: dirName !== null,
     queryFn: () => request<{ dirName: string; markdown: string }>(`/api/runs/${id}/stages/${dirName}/report`),
     queryKey: RUN_KEYS.report(id, dirName ?? ""),
+    refetchInterval: live ? 2_000 : false,
+    // A missing report is the normal state of a running stage, not a failure to retry.
+    retry: false,
   });
 }
 

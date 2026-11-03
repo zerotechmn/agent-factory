@@ -272,6 +272,7 @@ bun packages/factory/scripts/benchmark.ts report next baseline-v1  # compare two
 - **$1 is reserved for deployment repair.** If the budget runs out after the app exists, the factory skips the remaining review and fix work, redeploys the latest code and still ships it (`deployed_partial`). If the budget runs out before that, the run ends as `failed_budget`.
 - Spend comes from the SDK's `total_cost_usd`, which is an estimate and not a bill. It is logged for every agent call in `ledger.jsonl`, and verify entries show $0. The SDK checks the limit between turns, so a stage can go slightly over by up to one model turn.
 - There are also global limits: `DAILY_SPEND_CAP_USD` (which counts in-flight runs at full budget), `RUNS_PER_IP_PER_DAY` and `MAX_CONCURRENT_RUNS`.
+- The portal's **Ask** tab answers questions about a run with `CHAT_MODEL` (default `claude-opus-5-5`), reading the run's request, stages and reports. Its spend counts against `DAILY_SPEND_CAP_USD`, and `CHAT_MESSAGES_PER_IP_PER_DAY` (default 100) limits how much one visitor can ask.
 
 ## Inspecting a run
 

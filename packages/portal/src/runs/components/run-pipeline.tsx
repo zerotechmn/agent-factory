@@ -1,6 +1,7 @@
 import { IconCheck, IconCurrencyDollar, IconMinus, IconX } from "@tabler/icons-react";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 
+import { LazyMessageResponse } from "@/components/ai-elements/lazy-response";
 import { cn } from "@/lib/utils";
 
 import { AgentAvatar } from "../../agents/components/agent-avatar";
@@ -72,29 +73,46 @@ export function Figures({ now, stage }: { now: number; stage: Stage }) {
   );
 }
 
-/** The running agent's latest actions, newest first, fading as they age. */
+/**
+ * The running agent, live: what it last said (Markdown, through Streamdown) above its latest
+ * actions, newest first, fading as they age.
+ */
 function ActivityLog({ activity, label }: { activity: Activity[]; label: string }) {
   const box = "rounded-md border border-border bg-[var(--ds-white)] px-3 py-2.5 shadow-[var(--ds-shadow-card)] dark:bg-background";
-  if (!activity.length) return <p className={cn(box, "text-sm text-ds-fg-sec")} role="group" aria-label={label}>Thinking…</p>;
-  const [latest, ...earlier] = activity;
+  const message = activity.find((a) => a.kind === "message");
+  const [latest, ...earlier] = activity.filter((a) => a.kind !== "message");
+  if (!message && !latest) return <p className={cn(box, "text-sm text-ds-fg-sec")} role="group" aria-label={label}>Thinking…</p>;
   return (
-    <div className={cn(box, "space-y-1 font-mono text-xs")} role="group" aria-label={label}>
-      <p
-        key={`${latest!.at}-${latest!.text}`}
-        className="flex items-center gap-2 text-ds-fg motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1 motion-safe:duration-200"
-        aria-live="polite"
-      >
-        <span className="size-1.5 shrink-0 rounded-full bg-ds-accent motion-safe:animate-pulse" aria-hidden />
-        <span className="truncate">{latest!.text}</span>
-      </p>
-      <ul className="space-y-1">
-        {earlier.slice(0, 4).map((a, index) => (
-          <li key={`${a.at}-${a.text}`} className={cn("flex gap-2 text-ds-fg-sec", index > 1 && "opacity-60")}>
-            <time className="shrink-0 tabular-nums text-ds-fg-ter" dateTime={a.at}>{clockTime(a.at)}</time>
-            <span className="truncate">{a.text}</span>
-          </li>
-        ))}
-      </ul>
+    <div className={cn(box, "space-y-2")} role="group" aria-label={label}>
+      {message && (
+        <div className="max-h-56 overflow-y-auto">
+          <Suspense fallback={<p className="text-sm leading-6 whitespace-pre-wrap text-ds-fg">{message.text}</p>}>
+            <LazyMessageResponse className="text-sm leading-6" isAnimating>
+              {message.text}
+            </LazyMessageResponse>
+          </Suspense>
+        </div>
+      )}
+      {latest && (
+        <div className={cn("space-y-1 font-mono text-xs", message && "border-t border-border pt-2")}>
+          <p
+            key={`${latest.at}-${latest.text}`}
+            className="flex items-center gap-2 text-ds-fg motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-1 motion-safe:duration-200"
+            aria-live="polite"
+          >
+            <span className="size-1.5 shrink-0 rounded-full bg-ds-accent motion-safe:animate-pulse" aria-hidden />
+            <span className="truncate">{latest.text}</span>
+          </p>
+          <ul className="space-y-1">
+            {earlier.slice(0, 4).map((a, index) => (
+              <li key={`${a.at}-${a.text}`} className={cn("flex gap-2 text-ds-fg-sec", index > 1 && "opacity-60")}>
+                <time className="shrink-0 tabular-nums text-ds-fg-ter" dateTime={a.at}>{clockTime(a.at)}</time>
+                <span className="truncate">{a.text}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

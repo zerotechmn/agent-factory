@@ -4,7 +4,9 @@
 @import "shadcn/tailwind.css";
 
 @custom-variant dark (&:is(.dark *, [data-theme="dark"] *));
-@plugin "@tailwindcss/typography";
+/* Streamdown renders with Tailwind classes from its dist; scan them. */
+@source "../node_modules/streamdown/dist/*.js";
+@source "../node_modules/@streamdown/code/dist/*.js";
 
 /* Cursor DS tokens as Tailwind utilities (bg-ds-card, text-ds-fg-sec, border-ds-line, …).
    The values live on .ds-root, which wraps the whole app (see index.html). */
@@ -76,22 +78,19 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-.prose {
-  --tw-prose-body: var(--ds-text);
-  --tw-prose-headings: var(--ds-text);
-  --tw-prose-bold: var(--ds-text);
-  --tw-prose-links: var(--ds-text);
-  --tw-prose-code: var(--ds-code-text);
-  --tw-prose-quotes: var(--ds-text-sec);
-  --tw-prose-counters: var(--ds-text-sec);
-  --tw-prose-bullets: var(--ds-text-tertiary);
-  --tw-prose-hr: var(--ds-border);
-  --tw-prose-th-borders: var(--ds-border-strong);
-  --tw-prose-td-borders: var(--ds-border);
-}
-.prose :where(h1, h2, h3, h4) {
+/* Agent responses (Streamdown) in the DS voice: headings at normal weight with DS tracking,
+   links underlined in body colour rather than the button colour. */
+.ai-response :where([data-streamdown^="heading-"]) {
   font-weight: var(--ds-weight-normal);
   letter-spacing: var(--ds-tracking-md);
+}
+.ai-response :where([data-streamdown="link"]) {
+  color: var(--ds-text);
+  font-weight: inherit;
+  text-underline-offset: 4px;
+}
+.ai-response :where([data-streamdown="inline-code"]) {
+  color: var(--ds-code-text);
 }
 
 /* shadcn/ui + AI Elements theme, mapped onto the Cursor DS tokens. Declared on .ds-root (not :root)

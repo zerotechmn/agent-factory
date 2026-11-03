@@ -22,6 +22,10 @@ const envSchema = z.object({
   CUSTOMER_QUESTIONS: z.enum(["on", "off"]).default("on"),
   /** How long a run waits for the customer's answers before continuing with the agents' own choices. */
   CUSTOMER_TIMEOUT_MINUTES: z.coerce.number().positive().default(15),
+  /** Answers questions about a run on its Ask tab. Separate from FACTORY_MODEL, which only drives the pipeline. */
+  CHAT_MODEL: z.string().default("claude-opus-5-5"),
+  /** Most chat messages one IP may send per day, across all runs. */
+  CHAT_MESSAGES_PER_IP_PER_DAY: z.coerce.number().int().positive().default(100),
   DAILY_SPEND_CAP_USD: z.coerce.number().positive().default(100),
   DATA_DIR: z.string().default("./data"),
   DEPLOYER_URL: z.string().default("http://localhost:4100"),
